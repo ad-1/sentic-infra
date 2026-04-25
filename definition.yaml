@@ -38,7 +38,7 @@ spec:
   # -----------------------------------------------------------------------
   rabbitmq:
     additionalPlugins:
-      - rabbitmq_shovel          # useful for future DLQ/forwarding patterns
+      - rabbitmq_shovel # useful for future DLQ/forwarding patterns
       - rabbitmq_shovel_management
 
     additionalConfig: |
