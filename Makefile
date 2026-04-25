@@ -2,6 +2,8 @@ NAMESPACE  := sentic
 CLUSTER    := definition
 KUBE_CTX   ?= minikube
 TARGET     ?= rabbitmq
+ROOT_APP   := argocd/application.yaml
+SMOKE_QUEUE ?= raw-news
 
 KUBECTL    := kubectl --context=$(KUBE_CTX) -n $(NAMESPACE)
 
@@ -95,13 +97,44 @@ ns:
 		kubectl apply --context=$(KUBE_CTX) -f -
 
 ## Deploy the RabbitmqCluster
+.PHONY: wait-cluster-operator
+wait-cluster-operator:
+	@echo "⏳ Verifying RabbitMQ Cluster Operator is ready..."
+	@kubectl --context=$(KUBE_CTX) -n rabbitmq-system get deployment/rabbitmq-cluster-operator >/dev/null 2>&1 || { \
+		echo "❌ rabbitmq-cluster-operator deployment not found in namespace rabbitmq-system."; \
+		echo "   Fix: run 'make bootstrap' (GitOps path) or 'make install-cluster-operator' (legacy path), then retry."; \
+		exit 1; \
+	}
+	@kubectl --context=$(KUBE_CTX) -n rabbitmq-system rollout status deployment/rabbitmq-cluster-operator --timeout=180s
+
 .PHONY: apply-cluster
-apply-cluster: ns
+apply-cluster: ns wait-cluster-operator
 	$(KUBECTL) apply -f manifests/cluster/definition.yaml
 
 ## Deploy queue topology (requires Messaging Topology Operator)
+.PHONY: wait-topology-operator
+wait-topology-operator:
+	@echo "⏳ Verifying Messaging Topology Operator is ready..."
+	@kubectl --context=$(KUBE_CTX) -n rabbitmq-system get deployment/messaging-topology-operator >/dev/null 2>&1 || { \
+		echo "❌ messaging-topology-operator deployment not found in namespace rabbitmq-system."; \
+		echo "   Detected state is consistent with a stale validating webhook and no running operator."; \
+		echo "   Fix: run 'make bootstrap' (GitOps path) or 'make install-topology-operator' (legacy path), then retry."; \
+		exit 1; \
+	}
+	@kubectl --context=$(KUBE_CTX) -n rabbitmq-system rollout status deployment/messaging-topology-operator --timeout=180s
+	@for i in $$(seq 1 30); do \
+		if kubectl --context=$(KUBE_CTX) -n rabbitmq-system get svc messaging-topology-webhook-service >/dev/null 2>&1; then \
+			echo "✅ messaging-topology-webhook-service is available."; \
+			exit 0; \
+		fi; \
+		sleep 2; \
+	done; \
+	echo "❌ messaging-topology-webhook-service did not appear in namespace rabbitmq-system within 60s."; \
+	echo "   Check operator health with: kubectl --context=$(KUBE_CTX) -n rabbitmq-system get pods"; \
+	exit 1
+
 .PHONY: apply-topology
-apply-topology:
+apply-topology: wait-topology-operator
 	$(KUBECTL) apply -f manifests/topology/queues.yaml
 
 ## Deploy everything
@@ -147,7 +180,22 @@ amqp-url:
 .PHONY: status
 status:
 	$(KUBECTL) get rabbitmqcluster $(CLUSTER)
-	$(KUBECTL) get queue -l app.kubernetes.io/name=$(CLUSTER)
+	$(KUBECTL) get queue
+
+## Validate all required control-plane and workload resources
+.PHONY: validate
+validate: wait-cluster-operator wait-topology-operator wait status
+	@echo "✅ Validation checks passed."
+
+## Smoke-test publish + consume path via RabbitMQ management API
+.PHONY: smoke-test
+smoke-test:
+	@sh scripts/rabbitmq_smoke_test.sh "$(KUBE_CTX)" "$(NAMESPACE)" "$(CLUSTER)" "$(SMOKE_QUEUE)"
+
+## One-shot setup and verification flow for a fresh cluster
+.PHONY: setup-validate
+setup-validate: bootstrap apply validate smoke-test
+	@echo "🚀 Setup + validation completed successfully."
 
 ## Tail broker logs
 .PHONY: logs
@@ -209,3 +257,32 @@ repave-hard: delete-topology
 	$(KUBECTL) delete pvc --all
 	$(MAKE) apply
 	@echo "🔥 Hard repave complete. All data wiped and infra reset."
+
+.PHONY: refresh nuke
+
+## Refresh: Force ArgoCD to re-sync from Git immediately
+refresh:
+	kubectl --context=$(KUBE_CTX) -n argocd patch app sentic-infra \
+		-p '{"metadata":{"annotations":{"argocd.argoproj.io/refresh":"hard"}}}' \
+		--type=merge
+
+## Nuke: Wipe all ArgoCD-managed resources and re-bootstrap from scratch.
+## Use this when the cluster state is too tangled to recover gracefully.
+## Deletes the stale 'infrastructure' app if it exists, wipes everything,
+## then runs bootstrap to rebuild from Git as the source of truth.
+.PHONY: nuke
+nuke:
+	@echo "💥 Step 1/5 — Deleting ALL ArgoCD Applications (cascade=foreground)..."
+	@kubectl --context=$(KUBE_CTX) -n argocd delete app --all \
+		--cascade=foreground --ignore-not-found --timeout=300s || true
+	@echo "🧹 Step 2/5 — Cleaning up leftover RabbitMQ resources in sentic..."
+	@$(KUBECTL) delete rabbitmqcluster --all --ignore-not-found || true
+	@$(KUBECTL) delete queues.rabbitmq.com --all --ignore-not-found || true
+	@$(KUBECTL) delete pvc --all --ignore-not-found || true
+	@echo "🗑️  Step 3/5 — Removing stale operator namespaces (operators will be reinstalled)..."
+	@kubectl --context=$(KUBE_CTX) delete namespace cert-manager rabbitmq-system \
+		--ignore-not-found --timeout=120s || true
+	@echo "🧼 Step 4/5 — Removing any accidentally committed vendor manifests..."
+	@rm -rf vendor/
+	@echo "♻️  Step 5/5 — Re-bootstrapping from Git..."
+	@$(MAKE) -s bootstrap

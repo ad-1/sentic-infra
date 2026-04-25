@@ -10,7 +10,11 @@ spec:
   source:
     repoURL: "https://github.com/rabbitmq/messaging-topology-operator"
     targetRevision: "v1.19.1"
-    path: "deploy/messaging-topology-operator-with-certmanager"
+    path: "config/installation"
+    kustomize:
+      # Pin the container image tag — config/installation uses :latest by default
+      images:
+        - rabbitmqoperator/messaging-topology-operator:v1.19.1
   destination:
     server: "https://kubernetes.default.svc"
     namespace: rabbitmq-system

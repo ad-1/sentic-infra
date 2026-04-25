@@ -10,7 +10,11 @@ spec:
   source:
     repoURL: "https://github.com/rabbitmq/cluster-operator"
     targetRevision: "v2.20.1"
-    path: "deploy/cluster-operator"
+    path: "config/installation"
+    kustomize:
+      # Pin the container image tag — config/installation uses :latest by default
+      images:
+        - ghcr.io/rabbitmq/cluster-operator:v2.20.1
   destination:
     server: "https://kubernetes.default.svc"
     namespace: rabbitmq-system

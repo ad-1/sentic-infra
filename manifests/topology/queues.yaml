@@ -78,7 +78,7 @@ metadata:
   annotations:
     argocd.argoproj.io/sync-wave: "10"
 spec:
-  name: notifications
+  name: analytics-events
   durable: true
   autoDelete: false
   rabbitmqClusterReference:
