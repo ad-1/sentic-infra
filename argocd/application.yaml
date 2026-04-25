@@ -10,8 +10,11 @@ spec:
     targetRevision: master
     path: "." # Argo looks at the root of the repo
     directory:
-      recurse: true # This tells Argo to look into the /topology folder too
-      exclude: "argocd/**"
+      recurse: true
+      # Exclude the argocd/ seed manifest (bootstrapped manually) and the
+      # infrastructure/operators/ layer — those are owned by the 'infrastructure'
+      # child App (root-app.yaml) to avoid double-management conflicts.
+      exclude: "{argocd/**,infrastructure/operators/**}"
   destination:
     server: "https://kubernetes.default.svc"
     namespace: sentic
@@ -19,3 +22,11 @@ spec:
     automated:
       prune: true # If you delete a file in Git, Argo deletes it in K8s
       selfHeal: true # If you manually change K8s, Argo "overwrites" it back to Git state
+    syncOptions:
+      - CreateNamespace=true # Ensures the 'sentic' namespace exists on a fresh cluster
+    retry:
+      limit: 5 # Retry if workload CRDs aren't registered yet (operators still syncing)
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 10m

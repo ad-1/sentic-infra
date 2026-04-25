@@ -1,0 +1,40 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: rabbitmq-messaging-topology-operator
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
+spec:
+  project: default
+  source:
+    repoURL: "https://github.com/rabbitmq/messaging-topology-operator"
+    targetRevision: "v1.19.1"
+    path: "deploy/messaging-topology-operator-with-certmanager"
+  destination:
+    server: "https://kubernetes.default.svc"
+    namespace: rabbitmq-system
+  # cert-manager injects caBundle into webhook configs at runtime.
+  # Without ignoreDifferences, ArgoCD sees this as a perpetual diff and
+  # loops trying to remove the injected value — breaking the webhook.
+  ignoreDifferences:
+    - group: admissionregistration.k8s.io
+      kind: ValidatingWebhookConfiguration
+      jsonPointers:
+        - /webhooks/0/clientConfig/caBundle
+    - group: admissionregistration.k8s.io
+      kind: MutatingWebhookConfiguration
+      jsonPointers:
+        - /webhooks/0/clientConfig/caBundle
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 10m

@@ -1,55 +1,8 @@
 NAMESPACE  := sentic
 CLUSTER    := definition
 KUBE_CTX   ?= minikube
-TARGET     ?= rabbitmq
 
 KUBECTL    := kubectl --context=$(KUBE_CTX) -n $(NAMESPACE)
-
-# Variables
-export GITHUB_PAT ?= $(shell test -f ~/.github_pat && cat ~/.github_pat) # Or use an Env Var
-REPO_URL = https://github.com/ad-1/sentic-infra.git
-
-# ---------------------------------------------------------------------------
-# Bootstrap ArgoCD and install operators via GitOps
-# ---------------------------------------------------------------------------
-
-.PHONY: bootstrap
-bootstrap:
-	@test -n "$(GITHUB_PAT)" || (echo "❌ ERROR: GITHUB_PAT is not set. Export it or create ~/.github_pat"; exit 1)
-
-	@echo "🏗️  Installing ArgoCD..."
-	@kubectl create namespace argocd || true
-	@# Pre-create all required namespaces so ArgoCD never races against a missing ns
-	@kubectl create namespace cert-manager || true
-	@kubectl create namespace rabbitmq-system || true
-	@kubectl create namespace sentic || true
-	@# Use server-side apply for idempotence. --force-conflicts is required when
-	@# an existing cluster has ArgoCD resources previously created with client-side apply.
-	@kubectl apply --server-side --force-conflicts -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
-
-	@echo "⏳ Waiting for ArgoCD CRDs to be established..."
-	@kubectl wait --for=condition=established --timeout=60s crd/applications.argoproj.io
-
-	@echo "⏳ Waiting for ArgoCD Server to be ready..."
-	@kubectl wait --for=condition=available --timeout=300s -n argocd deployment/argocd-server
-
-	@echo "🔐 Injecting Repo Credentials (atomic — no disk write, no separate label step)..."
-	@# Triple-pipe: generate YAML → label in-memory → apply. The secret and its
-	@# argocd.argoproj.io/secret-type label land in one atomic kubectl apply.
-	@kubectl create secret generic repo-creds \
-		-n argocd \
-		--from-literal=url=$(REPO_URL) \
-		--from-literal=password=$(GITHUB_PAT) \
-		--from-literal=username=ad-1 \
-		--type=Opaque \
-		--dry-run=client -o yaml \
-	  | kubectl label --local -f - \
-		argocd.argoproj.io/secret-type=repository \
-		--overwrite -o yaml \
-	  | kubectl apply -f -
-
-	@echo "🚀 Applying Root Application..."
-	@kubectl apply -f infrastructure/root-app.yaml
 
 # ---------------------------------------------------------------------------
 # Prerequisites — run once per cluster
@@ -81,8 +34,8 @@ install-topology-operator:
 	kubectl rollout status -n rabbitmq-system deploy/messaging-topology-operator --timeout=120s
 
 ## Bootstrap a brand-new cluster: install all operators in the right order
-.PHONY: bootstrap-legacy
-bootstrap-legacy: install-cert-manager install-cluster-operator install-topology-operator
+.PHONY: bootstrap
+bootstrap: install-cert-manager install-cluster-operator install-topology-operator
 
 # ---------------------------------------------------------------------------
 # Sentic RabbitMQ deployment
@@ -164,18 +117,11 @@ delete-cluster:
 delete-topology:
 	$(KUBECTL) delete -f topology/queues.yaml
 
-## Port-Forward: Generic port-forward helper.
-## Usage:
-##   make port-forward # RabbitMQ + ArgoCD
+## Port-Forward: Opens the bridge (Blocking command) for the management UI (http://localhost:15672) and AMQP
 .PHONY: port-forward
 port-forward:
-	echo "🔌 Opening both tunnels (RabbitMQ + ArgoCD). Ctrl+C stops both..."; \
-	kubectl --context=$(KUBE_CTX) -n argocd port-forward svc/argocd-server 8080:443 & \
-	ARGO_PID=$$!; \
-	$(KUBECTL) port-forward svc/$(CLUSTER) 5672:5672 15672:15672 & \
-	RABBIT_PID=$$!; \
-	trap 'kill $$ARGO_PID $$RABBIT_PID 2>/dev/null' INT TERM EXIT; \
-	wait; 
+	@echo "🔌 Opening tunnel to RabbitMQ (Ctrl+C to stop)..."
+	@$(KUBECTL) port-forward svc/$(CLUSTER) 5672:5672 15672:15672
 
 ## Repave: The Orchestrator
 .PHONY: repave
@@ -200,7 +146,7 @@ repave:
 	@printf "AMQP URL: "; $(MAKE) -s amqp-url
 	@echo "---------------------------------------------------"
 	@echo "🚀 SUCCESS: Infrastructure is live."
-	@echo "👉 Run 'make port-forward' for RabbitMQ or 'make port-forward TARGET=argocd' for ArgoCD UI"
+	@echo "👉 Run 'make port-forward' in a new terminal tab to access the UI at http://localhost:15672"
 
 ## Force-Repave: Wipes EVERYTHING including persistent data (PVCs)
 .PHONY: repave-hard

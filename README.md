@@ -1,285 +1,201 @@
-# sentic-infra
+# Sentic Infrastructure
 
-> Infrastructure for the Sentic platform — owns the shared RabbitMQ broker used by sentic-signal, sentic-analyst, and sentic-notifier.
+GitOps-managed RabbitMQ infrastructure for Sentic, designed so a fresh cluster can be rebuilt from source control (Phoenix Infrastructure / DR mindset).
 
-## Architecture
+## What This Repo Manages
 
-RabbitMQ is managed by two official Kubernetes operators:
+- ArgoCD App-of-Apps orchestration.
+- Operator layer:
+  - cert-manager
+  - RabbitMQ Cluster Operator
+  - RabbitMQ Messaging Topology Operator
+- Workload layer:
+  - `RabbitmqCluster` in namespace `sentic`
+  - Queue topology (`Queue` CRs) in namespace `sentic`
 
-| Operator | Purpose | CRD |
-|---|---|---|
-| [Cluster Operator](https://www.rabbitmq.com/kubernetes/operator/using-operator) | Provisions and manages the RabbitMQ StatefulSet, Services, Secrets, and config | `RabbitmqCluster` |
-| [Messaging Topology Operator](https://www.rabbitmq.com/kubernetes/operator/using-topology-operator) | Declares and continuously reconciles queues, exchanges, bindings, users, and vhosts | `Queue`, `Exchange`, `Binding`, … |
+## App-of-Apps Topology
 
-This means **all broker config lives as version-controlled YAML** — no `rabbitmqadmin` scripts, no post-install jobs.
+There are two ArgoCD entry points in this repo:
 
----
+1. Seed app (`argocd/application.yaml`, optional/manual):
+  - Points at repository root.
+  - Excludes `argocd/**` and `infrastructure/operators/**` to avoid ownership conflicts.
+  - Can manage workload manifests (for example `definition.yaml` and `topology/`).
 
-## Repo structure
+2. Root app (`infrastructure/root-app.yaml`, used by `make bootstrap`):
+  - Points at `infrastructure/operators`.
+  - Manages child ArgoCD Applications for operators.
+  - Has automated sync with prune + self-heal + retry.
 
-```
-sentic-infra/
-├── definition.yaml        # RabbitmqCluster — broker spec (resources, persistence, plugins)
-├── topology/
-│   └── queues.yaml        # Queue CRDs — one per Sentic queue
-├── Makefile               # Workflow commands
-└── README.md
-```
+Operator child Applications use sync waves:
 
----
+- wave `1`: cert-manager
+- wave `2`: rabbitmq-cluster-operator
+- wave `3`: rabbitmq-messaging-topology-operator
 
-## Prerequisites
+This ensures cert-manager is healthy before the topology operator starts.
 
-You need these operators installed once per cluster. The Makefile wraps all three steps.
+## Namespace Architecture
 
-### Automated (minikube / fresh cluster)
+- `argocd`: ArgoCD control plane + repo credentials secret.
+- `cert-manager`: cert-manager components.
+- `rabbitmq-system`: RabbitMQ operators.
+- `sentic`: RabbitMQ cluster and queue topology.
+
+`make bootstrap` pre-creates all required namespaces, and ArgoCD apps also use `CreateNamespace=true` as a safety net.
+
+## Bootstrap (Fresh Cluster)
+
+### Prerequisites
+
+1. A running Kubernetes context (default `minikube`, override with `KUBE_CTX=<context>`).
+2. `kubectl` configured for that cluster.
+3. A GitHub PAT with repo read access for this private repository.
+4. PAT provided as one of:
+  - environment variable: `export GITHUB_PAT=...`
+  - file: `~/.github_pat`
+
+### Command
 
 ```bash
 make bootstrap
 ```
 
-This runs, in order:
-
-1. **cert-manager** — required by the Topology Operator for its webhook TLS.
-2. **RabbitMQ Cluster Operator** — manages `RabbitmqCluster` resources.
-3. **RabbitMQ Messaging Topology Operator** — manages `Queue` and other topology resources.
-
-### Manual (if you prefer explicit control)
+Quick check before you run it:
 
 ```bash
-# 1. cert-manager
-kubectl apply -f https://github.com/cert-manager/cert-manager/releases/latest/download/cert-manager.yaml
-kubectl rollout status -n cert-manager deploy/cert-manager --timeout=120s
-
-# 2. Cluster Operator
-kubectl apply -f https://github.com/rabbitmq/cluster-operator/releases/latest/download/cluster-operator.yml
-
-# 3. Topology Operator (cert-manager variant)
-kubectl apply -f https://github.com/rabbitmq/messaging-topology-operator/releases/latest/download/messaging-topology-operator-with-certmanager.yaml
+ls ~/.github_pat
 ```
 
----
+### What `bootstrap` Does
 
-## Namespace Architecture
+1. Validates `GITHUB_PAT` is set (fails fast if missing).
+2. Creates namespaces (`argocd`, `cert-manager`, `rabbitmq-system`, `sentic`) idempotently.
+3. Installs ArgoCD manifests.
+4. Waits for ArgoCD CRDs and API deployment readiness.
+5. Creates/updates the repo credentials secret (`repo-creds`) in `argocd`:
+  - Secret is rendered in-memory with `--dry-run=client -o yaml`.
+  - Required ArgoCD label is added in-memory with `kubectl label --local`.
+  - Final manifest is applied in one atomic pipe.
+  - No PAT file is written to the repo.
+6. Applies `infrastructure/root-app.yaml`.
 
-The operators run in **system namespaces** and watch your **application namespace**:
+### Expected Bootstrap Behavior
 
-```
-System namespaces (installed once, cluster-scoped):
-  cert-manager         → runs cert-manager (webhook TLS)
-  rabbitmq-system      → runs Cluster Operator + Topology Operator
+During the first few minutes, you may see transient warnings or errors while operators and webhooks are coming up, for example webhook call failures.
 
-These watch all namespaces. For Sentic:
-  sentic               → RabbitMQ broker pods, services, queues
-```
+This is expected during a cold start. The ArgoCD Applications use sync waves and retry backoff, so the system should self-heal to green within roughly 3 to 5 minutes.
 
-- **`cert-manager`** — Webhook certificate management for the operators. Installed cluster-wide once.
-- **`rabbitmq-system`** — Both RabbitMQ operators run here. They're cluster-scoped and reconcile `RabbitmqCluster` and `Queue` CRDs in any namespace.
-- **`sentic`** — Your RabbitMQ broker pods, services, and queue topology CRDs. Application workloads also run here.
+## Day-2 Operations
 
-This is why `make bootstrap` installs everything, but `make apply` deploys into `sentic` only.
-
----
-
-## Deploying RabbitMQ
+### Deploy/Apply Workloads
 
 ```bash
-# Deploy the broker cluster + all queues in one step
 make apply
-
-# Wait until the broker pod is Ready
-make wait
 ```
 
-Under the hood this runs:
-```bash
-kubectl apply -f definition.yaml      # RabbitmqCluster
-kubectl apply -f topology/queues.yaml # Queue resources
-```
+Applies:
 
-### Verify
+- `definition.yaml` (RabbitmqCluster)
+- `topology/queues.yaml` (Queue CRs)
+
+### Repave (Preserve Data)
 
 ```bash
-make status
-
-# Expected output:
-# NAME         ALLREPLICASREADY   RECONCILESUCCESS   AGE
-# definition   True               True               2m
-#
-# NAME               READY
-# raw-news           True
-# analysis-results   True
-# notifications      True
+make repave
 ```
 
----
+Flow:
 
-## Queues
+1. Deletes queue topology and RabbitmqCluster definitions.
+2. Re-applies definitions.
+3. Waits for broker readiness.
+4. Prints generated credentials and AMQP URL.
 
-Declared in [topology/queues.yaml](topology/queues.yaml). The Topology Operator reconciles these continuously — if a queue is deleted in the broker it will be re-declared automatically.
+Notes:
 
-| Queue | Producer | Consumer |
-|---|---|---|
-| `raw-news` | sentic-signal | sentic-analyst |
-| `analysis-results` | sentic-analyst | sentic-notifier |
-| `notifications` | sentic-notifier | — |
+- PVCs are not deleted, so persistent broker data is preserved.
 
-### Adding a new queue
-
-1. Append a new `Queue` block to `topology/queues.yaml`.
-2. `kubectl apply -f topology/queues.yaml` (or `make apply-topology`).
-
----
-
-## Credentials
-
-The Cluster Operator auto-generates admin credentials and stores them in a Secret named `<cluster>-default-user`.
+### Repave Hard (Blow Everything Away)
 
 ```bash
-make username   # print admin username
-make password   # print admin password
-make amqp-url   # print full AMQP URL
-# → amqp://9JkXq...:Wv3R...@definition.sentic.svc.cluster.local:5672/
+make repave-hard
 ```
 
-### How services consume credentials
+Flow:
 
-Services should reference the operator-managed Secret directly — **never hard-code credentials**.
+1. Deletes queue topology resources.
+2. Deletes all `RabbitmqCluster` resources in namespace `sentic`.
+3. Deletes all PVCs in namespace `sentic`.
+4. Re-applies workload manifests.
 
-```yaml
-# In a service Deployment
-env:
-  - name: RABBITMQ_USERNAME
-    valueFrom:
-      secretKeyRef:
-        name: definition-default-user   # <clusterName>-default-user
-        key: username
-  - name: RABBITMQ_PASSWORD
-    valueFrom:
-      secretKeyRef:
-        name: definition-default-user
-        key: password
-  - name: RABBITMQ_HOST
-    value: definition.sentic.svc.cluster.local
-  - name: RABBITMQ_PORT
-    value: "5672"
-```
+This is destructive and wipes broker state.
 
-The Secret is in the `sentic` namespace — services running in the same namespace can reference it directly.
+### Runtime Helpers
 
----
+- `make status` - quick RabbitMQ/Queue status.
+- `make wait` - blocks until broker pod is Ready.
+- `make logs` - tails broker logs.
+- `make port-forward` - generic forwarding helper (RabbitMQ default).
+- `make username`, `make password`, `make amqp-url` - credential helpers.
 
-## Management UI (local dev)
+Port-forward options:
 
 ```bash
-make port-forward
-# → AMQP on localhost:5672
-# → Management UI at http://localhost:15672
+make port-forward                  # RabbitMQ (AMQP + UI)
+make port-forward TARGET=argocd    # ArgoCD UI
+make port-forward TARGET=both      # RabbitMQ + ArgoCD
 ```
 
-Login with the credentials from `make username` / `make password`.
+### ArgoCD UI After Bootstrap
 
----
+Once `make bootstrap` finishes, you can inspect the cascading sync in the ArgoCD UI.
 
-## Makefile reference
-
-| Target | Description |
-|---|---|
-| `bootstrap` | Install cert-manager + both operators (run once per cluster) |
-| `install-cert-manager` | Install cert-manager only |
-| `install-cluster-operator` | Install RabbitMQ Cluster Operator only |
-| `install-topology-operator` | Install Messaging Topology Operator only |
-| `apply` | Deploy cluster + topology |
-| `apply-cluster` | Deploy/update `definition.yaml` only |
-| `apply-topology` | Deploy/update `topology/queues.yaml` only |
-| `wait` | Block until broker pod is Ready |
-| `status` | Show cluster and queue status |
-| `logs` | Tail broker logs |
-| `username` | Print admin username |
-| `password` | Print admin password |
-| `amqp-url` | Print full AMQP connection URL |
-| `port-forward` | Forward ports 5672 and 15672 to localhost |
-| `delete-cluster` | Delete the RabbitmqCluster (PVCs kept) |
-| `delete-topology` | Delete Queue resources |
-
-Override defaults:
+Get the initial admin password:
 
 ```bash
-make apply KUBE_CTX=my-cluster NAMESPACE=platform
+kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d; echo
 ```
 
----
-
-## Key differences from the previous Helm chart approach
-
-| Concern | Old (Helm/Bitnami) | New (Operator) |
-|---|---|---|
-| Broker deployment | Helm subchart, ~50 lines of values | 40-line `RabbitmqCluster` YAML |
-| Queue declarations | Post-install Job hitting HTTP API | `Queue` CRDs, continuously reconciled |
-| Credentials | Custom post-install Job writing a Secret | Auto-generated `<name>-default-user` Secret |
-| Updates | `helm upgrade` | `kubectl apply` |
-| Queue drift | Not detected | Operator re-declares deleted queues automatically |
-
----
-
-## Troubleshooting
-
-### Operators not starting (API timeout)
-
-Symptoms:
-```
-error: "unable to start manager", error: "failed to get server groups: Get \"https://10.96.0.1:443/api\": dial tcp i/o timeout"
-```
-
-The operator pod can't reach the Kubernetes API server.
-
-**Solutions:**
-1. Verify minikube is running: `minikube status`
-2. Give operators time to initialize (30–60s): `kubectl -n rabbitmq-system logs -f deploy/rabbitmq-cluster-operator`
-3. If persistent, restart minikube:
-   ```bash
-   minikube stop
-   minikube start
-   make bootstrap
-   ```
-
-### RabbitmqCluster pod not scheduling
-
-Pod `definition-server-0` stays in `Pending` state.
-
-**Check:**
-```bash
-kubectl -n sentic describe pod definition-server-0
-```
-
-Common causes:
-- **No default StorageClass** — minikube provides `standard`. Verify: `kubectl get storageclass`
-- **Insufficient resources** — reduce `spec.resources.limits` in `definition.yaml`
-- **PVC pending** — check: `kubectl -n sentic get pvc`
-
-### Queue topology resources not creating
-
-`Queue` CRDs stay non-Ready or show errors.
-
-**Check:**
-```bash
-kubectl -n sentic get queue
-kubectl -n sentic describe queue raw-news
-```
-
-Common causes:
-- **Topology Operator not installed** — run `make bootstrap`
-- **RabbitmqCluster not ready** — queues can't be declared until the broker pod is `Running`
-- **API errors** — check operator logs: `kubectl -n rabbitmq-system logs -f deploy/messaging-topology-operator`
-
-### Can't reach management UI
+Open a tunnel to the UI:
 
 ```bash
-make port-forward
-# Then: http://localhost:15672
+make port-forward TARGET=argocd
 ```
 
-If port-forward fails:
-- Service exists: `kubectl -n sentic get svc definition`
-- Pod is running: `kubectl -n sentic get pod definition-server-0`
-- Check logs: `make logs`
+Then browse to `https://localhost:8080`.
+
+## Production Readiness Notes
+
+- Operator versions are pinned in `infrastructure/operators/*.yaml`.
+- All ArgoCD Applications use automated sync with prune + self-heal.
+- Retry backoff is configured to handle transient sync/startup races.
+- Topology operator app ignores webhook `caBundle` drift injected by cert-manager to prevent perpetual OutOfSync loops.
+
+## DR / Phoenix Recovery Runbook (Minimal)
+
+For a brand-new cluster:
+
+1. Ensure Kubernetes context is correct.
+2. Ensure PAT is available (`GITHUB_PAT` or `~/.github_pat`).
+3. Run `make bootstrap`.
+4. Run `make apply` (if workload manifests are not already being applied by ArgoCD in your chosen model).
+5. Verify with `make status` and `make wait`.
+6. Use `make port-forward` for local validation.
+
+If you want a full clean-room DR rehearsal on Minikube:
+
+```bash
+minikube delete
+minikube start
+make bootstrap
+```
+
+## Repository Layout
+
+- `argocd/application.yaml` - optional seed app manifest.
+- `infrastructure/root-app.yaml` - root app that manages operator child apps.
+- `infrastructure/operators/` - operator ArgoCD Application manifests.
+- `definition.yaml` - RabbitmqCluster custom resource.
+- `topology/queues.yaml` - RabbitMQ queue topology custom resources.
+- `Makefile` - bootstrap, deploy, repave, and helper targets.

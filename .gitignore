@@ -1,2 +1,19 @@
-# macOS
+# Local environment files
+.env
+.github_pat
+.github_token
+*.pat
+*.token
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS generated files
 .DS_Store
+Thumbs.db
+
+# Kubernetes
+.kube/
