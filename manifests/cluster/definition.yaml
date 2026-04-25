@@ -3,6 +3,8 @@ kind: RabbitmqCluster
 metadata:
   name: definition
   namespace: sentic
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
   labels:
     app: sentic-rabbitmq
 spec:

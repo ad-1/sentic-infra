@@ -49,7 +49,7 @@ bootstrap:
 	  | kubectl apply -f -
 
 	@echo "🚀 Applying Root Application..."
-	@kubectl apply -f infrastructure/root-app.yaml
+	@kubectl apply -f argocd/application.yaml
 
 # ---------------------------------------------------------------------------
 # Prerequisites — run once per cluster
@@ -97,12 +97,12 @@ ns:
 ## Deploy the RabbitmqCluster
 .PHONY: apply-cluster
 apply-cluster: ns
-	$(KUBECTL) apply -f definition.yaml
+	$(KUBECTL) apply -f manifests/cluster/definition.yaml
 
 ## Deploy queue topology (requires Messaging Topology Operator)
 .PHONY: apply-topology
 apply-topology:
-	$(KUBECTL) apply -f topology/queues.yaml
+	$(KUBECTL) apply -f manifests/topology/queues.yaml
 
 ## Deploy everything
 .PHONY: apply
@@ -157,12 +157,12 @@ logs:
 ## Delete the RabbitmqCluster (leaves PVCs intact)
 .PHONY: delete-cluster
 delete-cluster:
-	$(KUBECTL) delete -f definition.yaml
+	$(KUBECTL) delete -f manifests/cluster/definition.yaml
 
 ## Delete queue topology resources
 .PHONY: delete-topology
 delete-topology:
-	$(KUBECTL) delete -f topology/queues.yaml
+	$(KUBECTL) delete -f manifests/topology/queues.yaml
 
 ## Port-Forward: Generic port-forward helper.
 ## Usage:
@@ -181,8 +181,8 @@ port-forward:
 .PHONY: repave
 repave:
 	@echo "🧹 Step 1/5 — Tearing down (ignoring errors if not found)..."
-	@$(KUBECTL) delete -f topology/queues.yaml --ignore-not-found
-	@$(KUBECTL) delete -f definition.yaml --ignore-not-found
+	@$(KUBECTL) delete -f manifests/topology/queues.yaml --ignore-not-found
+	@$(KUBECTL) delete -f manifests/cluster/definition.yaml --ignore-not-found
 	
 	@echo "🐇 Step 2/5 — Applying definitions..."
 	@$(MAKE) -s apply

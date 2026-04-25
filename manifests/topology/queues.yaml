@@ -5,12 +5,8 @@
 # Each Queue resource is reconciled continuously — if a queue is deleted
 # in the broker it will be re-declared automatically.
 #
-# Prerequisites:
-#   kubectl apply -f https://github.com/cert-manager/cert-manager/releases/latest/download/cert-manager.yaml
-#   kubectl apply -f https://github.com/rabbitmq/messaging-topology-operator/releases/latest/download/messaging-topology-operator-with-certmanager.yaml
-#
-# Apply:
-#   kubectl apply -f topology/queues.yaml
+# Sync wave 10: applied after the RabbitmqCluster (wave 5) is healthy and
+# the broker is accepting connections.
 # ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
@@ -22,6 +18,8 @@ kind: Queue
 metadata:
   name: raw-news
   namespace: sentic
+  annotations:
+    argocd.argoproj.io/sync-wave: "10"
 spec:
   name: raw-news
   durable: true
@@ -39,6 +37,8 @@ kind: Queue
 metadata:
   name: analysis-results
   namespace: sentic
+  annotations:
+    argocd.argoproj.io/sync-wave: "10"
 spec:
   name: analysis-results
   durable: true
@@ -56,6 +56,8 @@ kind: Queue
 metadata:
   name: notifications
   namespace: sentic
+  annotations:
+    argocd.argoproj.io/sync-wave: "10"
 spec:
   name: notifications
   durable: true
@@ -73,6 +75,8 @@ kind: Queue
 metadata:
   name: analytics-events
   namespace: sentic
+  annotations:
+    argocd.argoproj.io/sync-wave: "10"
 spec:
   name: notifications
   durable: true

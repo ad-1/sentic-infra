@@ -8,9 +8,13 @@ spec:
   source:
     repoURL: "https://github.com/ad-1/sentic-infra"
     targetRevision: main
-    # Root app should only manage child Application manifests.
-    # infrastructure/root-app.yaml then owns infrastructure/operators.
-    path: "infrastructure"
+    # Root app recurses manifests/ only. Sync waves inside control order:
+    #   wave 1-3 → operator Applications
+    #   wave 5   → RabbitmqCluster
+    #   wave 10  → Queue topology
+    path: "manifests"
+    directory:
+      recurse: true
   destination:
     server: "https://kubernetes.default.svc"
     namespace: argocd
