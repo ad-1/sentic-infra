@@ -1,0 +1,48 @@
+apiVersion: rabbitmq.com/v1beta1
+kind: RabbitmqCluster
+metadata:
+  name: definition
+  namespace: sentic
+  labels:
+    app: sentic-rabbitmq
+spec:
+  replicas: 1
+
+  # -----------------------------------------------------------------------
+  # Resources
+  # Tuned for local minikube development — scale up for staging/production.
+  # The operator sets RabbitMQ's memory high-watermark to 60 % of the limit,
+  # so keep requests == limits to avoid OOM surprises.
+  # -----------------------------------------------------------------------
+  resources:
+    requests:
+      cpu: 200m
+      memory: 1Gi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+
+  # -----------------------------------------------------------------------
+  # Persistence
+  # "standard" is the default StorageClass in minikube.
+  # Change storageClassName to "" to use the cluster default in other envs.
+  # -----------------------------------------------------------------------
+  persistence:
+    storageClassName: standard
+    storage: 2Gi
+
+  # -----------------------------------------------------------------------
+  # RabbitMQ broker configuration
+  # Management, Prometheus, and K8s peer-discovery plugins are enabled by
+  # the operator automatically. Add extras in additionalPlugins.
+  # -----------------------------------------------------------------------
+  rabbitmq:
+    additionalPlugins:
+      - rabbitmq_shovel          # useful for future DLQ/forwarding patterns
+      - rabbitmq_shovel_management
+
+    additionalConfig: |
+      # Cap memory watermark at 70 % of the container limit.
+      vm_memory_high_watermark.relative = 0.7
+      # Log only warnings and above in dev to reduce noise.
+      log.console.level = warning

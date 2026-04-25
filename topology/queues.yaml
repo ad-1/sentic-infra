@@ -1,0 +1,65 @@
+# ---------------------------------------------------------------------------
+# Sentic queue topology
+#
+# Managed by the RabbitMQ Messaging Topology Operator.
+# Each Queue resource is reconciled continuously — if a queue is deleted
+# in the broker it will be re-declared automatically.
+#
+# Prerequisites:
+#   kubectl apply -f https://github.com/cert-manager/cert-manager/releases/latest/download/cert-manager.yaml
+#   kubectl apply -f https://github.com/rabbitmq/messaging-topology-operator/releases/latest/download/messaging-topology-operator-with-certmanager.yaml
+#
+# Apply:
+#   kubectl apply -f topology/queues.yaml
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# raw-news
+# Published by sentic-signal. Contains unprocessed news articles.
+# ---------------------------------------------------------------------------
+apiVersion: rabbitmq.com/v1beta1
+kind: Queue
+metadata:
+  name: raw-news
+  namespace: sentic
+spec:
+  name: raw-news
+  durable: true
+  autoDelete: false
+  rabbitmqClusterReference:
+    name: definition
+    namespace: sentic
+---
+# ---------------------------------------------------------------------------
+# analysis-results
+# Published by sentic-analyst. Contains scored/enriched articles.
+# ---------------------------------------------------------------------------
+apiVersion: rabbitmq.com/v1beta1
+kind: Queue
+metadata:
+  name: analysis-results
+  namespace: sentic
+spec:
+  name: analysis-results
+  durable: true
+  autoDelete: false
+  rabbitmqClusterReference:
+    name: definition
+    namespace: sentic
+---
+# ---------------------------------------------------------------------------
+# notifications
+# Consumed by sentic-notifier. Contains outbound alert payloads.
+# ---------------------------------------------------------------------------
+apiVersion: rabbitmq.com/v1beta1
+kind: Queue
+metadata:
+  name: notifications
+  namespace: sentic
+spec:
+  name: notifications
+  durable: true
+  autoDelete: false
+  rabbitmqClusterReference:
+    name: definition
+    namespace: sentic
