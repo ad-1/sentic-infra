@@ -63,3 +63,20 @@ spec:
   rabbitmqClusterReference:
     name: definition
     namespace: sentic
+---
+# ---------------------------------------------------------------------------
+# analytics-events
+# Published by sentic-analyst. Contains events for internal analytics.
+# ---------------------------------------------------------------------------
+apiVersion: rabbitmq.com/v1beta1
+kind: Queue
+metadata:
+  name: analytics-events
+  namespace: sentic
+spec:
+  name: notifications
+  durable: true
+  autoDelete: false
+  rabbitmqClusterReference:
+    name: definition
+    namespace: sentic

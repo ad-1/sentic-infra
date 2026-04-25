@@ -6,11 +6,12 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: "https://github.com/ad-1/sentic-infra.git"
+    repoURL: "https://github.com/ad-1/sentic-infra"
     targetRevision: master
     path: "." # Argo looks at the root of the repo
     directory:
       recurse: true # This tells Argo to look into the /topology folder too
+      exclude: "argocd/**"
   destination:
     server: "https://kubernetes.default.svc"
     namespace: sentic
