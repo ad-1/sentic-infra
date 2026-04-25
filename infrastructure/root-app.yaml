@@ -6,7 +6,7 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: "https://github.com/ad-1/sentic-infra.git"
+    repoURL: "https://github.com/ad-1/sentic-infra"
     targetRevision: "HEAD"
     path: "infrastructure/operators"
   destination:
