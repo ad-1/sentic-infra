@@ -118,7 +118,8 @@ Notes:
 
 - This is destructive for RabbitMQ state (PVCs are deleted by `nuke`).
 - Use this as the canonical end-to-end recovery command.
-- If operator rollouts fail, `repave` now fails with ArgoCD app status and operator diagnostics.
+- If operator rollouts fail, `repave` now fails fast with ArgoCD app status, pod state blockers, and recent namespace events.
+- Operator image release tags must not include a `v` prefix (use `2.20.1` not `v2.20.1`, `1.19.1` not `v1.19.1`).
 
 ### Repave Hard
 

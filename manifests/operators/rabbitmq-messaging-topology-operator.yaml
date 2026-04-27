@@ -12,9 +12,9 @@ spec:
     targetRevision: "v1.19.1"
     path: "config/installation"
     kustomize:
-      # Pin the container image tag — config/installation uses :latest by default
+      # Pin the container image tag — release tags do not use the v-prefix.
       images:
-        - controller=rabbitmqoperator/messaging-topology-operator:v1.19.1
+        - controller=rabbitmqoperator/messaging-topology-operator:1.19.1
   destination:
     server: "https://kubernetes.default.svc"
     namespace: rabbitmq-system

@@ -58,10 +58,14 @@ bootstrap:
 wait-argocd-operator-apps:
 	@echo "⏳ Waiting for ArgoCD operator applications to be Synced + Healthy..."
 	@for app in cert-manager rabbitmq-cluster-operator rabbitmq-messaging-topology-operator; do \
+		if [ "$$app" = "cert-manager" ]; then NS=cert-manager; else NS=rabbitmq-system; fi; \
 		echo "   • Ensuring app $$app exists..."; \
 		for i in $$(seq 1 90); do \
 			if kubectl --context=$(KUBE_CTX) -n argocd get app $$app >/dev/null 2>&1; then \
 				break; \
+			fi; \
+			if [ $$(expr $$i % 10) -eq 0 ]; then \
+				echo "     still waiting for app $$app to be created... ($$((i*2))s elapsed)"; \
 			fi; \
 			sleep 2; \
 		done; \
@@ -75,9 +79,28 @@ wait-argocd-operator-apps:
 		for i in $$(seq 1 180); do \
 			SYNC=$$(kubectl --context=$(KUBE_CTX) -n argocd get app $$app -o jsonpath='{.status.sync.status}' 2>/dev/null); \
 			HEALTH=$$(kubectl --context=$(KUBE_CTX) -n argocd get app $$app -o jsonpath='{.status.health.status}' 2>/dev/null); \
+			BLOCKERS=$$(kubectl --context=$(KUBE_CTX) -n $$NS get pods --no-headers 2>/dev/null | \
+				awk '$$3 ~ /ImagePullBackOff|ErrImagePull|CrashLoopBackOff|CreateContainerConfigError|InvalidImageName/ {print $$1" status="$$3}'); \
+			if [ -n "$$BLOCKERS" ]; then \
+				echo "❌ Detected rollout blockers in namespace $$NS while waiting for $$app:"; \
+				echo "$$BLOCKERS"; \
+				echo "   Recent events from $$NS:"; \
+				kubectl --context=$(KUBE_CTX) -n $$NS get events --sort-by=.lastTimestamp | tail -n 20; \
+				exit 1; \
+			fi; \
+			if [ "$$HEALTH" = "Degraded" ]; then \
+				echo "❌ ArgoCD app $$app became Degraded (sync=$$SYNC)."; \
+				kubectl --context=$(KUBE_CTX) -n argocd get app $$app -o wide; \
+				echo "   Recent events from $$NS:"; \
+				kubectl --context=$(KUBE_CTX) -n $$NS get events --sort-by=.lastTimestamp | tail -n 20; \
+				exit 1; \
+			fi; \
 			if [ "$$SYNC" = "Synced" ] && [ "$$HEALTH" = "Healthy" ]; then \
 				echo "✅ $$app is Synced + Healthy."; \
 				break; \
+			fi; \
+			if [ $$(expr $$i % 10) -eq 0 ]; then \
+				echo "     $$app sync=$$SYNC health=$$HEALTH ($$((i*2))s elapsed)"; \
 			fi; \
 			sleep 2; \
 		done; \
@@ -87,6 +110,8 @@ wait-argocd-operator-apps:
 			echo "❌ ArgoCD app $$app is not ready (sync=$$SYNC, health=$$HEALTH)."; \
 			echo "   App status:"; \
 			kubectl --context=$(KUBE_CTX) -n argocd get app $$app -o wide; \
+			echo "   Recent events from $$NS:"; \
+			kubectl --context=$(KUBE_CTX) -n $$NS get events --sort-by=.lastTimestamp | tail -n 20; \
 			exit 1; \
 		fi; \
 	done
@@ -232,11 +257,11 @@ status:
 check-operator-images:
 	@echo "🔎 Checking operator deployment image references..."
 	@BAD=$$(kubectl --context=$(KUBE_CTX) -n rabbitmq-system get deploy -o jsonpath='{range .items[*]}{.metadata.name}{"="}{range .spec.template.spec.containers[*]}{.image}{" "}{end}{"\n"}{end}' 2>/dev/null | \
-		awk -F= '$$1 ~ /rabbitmq-cluster-operator|messaging-topology-operator/ && $$2 ~ /(^|[[:space:]])localhost\// {print $$0}'); \
+		awk -F= '$$1 ~ /rabbitmq-cluster-operator|messaging-topology-operator/ && ($$2 ~ /(^|[[:space:]])localhost\// || $$2 ~ /ghcr\.io\/rabbitmq\/cluster-operator:v[0-9]/ || $$2 ~ /rabbitmqoperator\/messaging-topology-operator:v[0-9]/) {print $$0}'); \
 	if [ -n "$$BAD" ]; then \
-		echo "❌ Found localhost image references for operators:"; \
+		echo "❌ Found invalid operator image references:"; \
 		echo "$$BAD"; \
-		echo "   This usually means the cluster is expecting local-only images."; \
+		echo "   Use non-localhost images and release tags without a v-prefix (e.g., 2.20.1, 1.19.1)."; \
 		echo "   Reconcile Argo apps and image tags before retrying."; \
 		exit 1; \
 	fi; \
