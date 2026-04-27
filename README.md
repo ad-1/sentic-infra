@@ -1,59 +1,68 @@
 # Sentic Infrastructure
 
-GitOps-managed RabbitMQ infrastructure for Sentic, designed so a fresh cluster can be rebuilt from source control (Phoenix Infrastructure / DR mindset).
+GitOps-managed RabbitMQ infrastructure for Sentic, designed for repeatable rebuilds from source control (Phoenix/DR model).
 
-## What This Repo Manages
+## What This Repository Manages
 
-- ArgoCD App-of-Apps orchestration.
+- Argo CD control-plane bootstrap and app-of-apps orchestration.
 - Operator layer:
   - cert-manager
   - RabbitMQ Cluster Operator
   - RabbitMQ Messaging Topology Operator
 - Workload layer:
-  - `RabbitmqCluster` in namespace `sentic`
-  - Queue topology (`Queue` CRs) in namespace `sentic`
+  - RabbitmqCluster in namespace sentic
+  - Queue topology (Queue CRs) in namespace sentic
 
-## App-of-Apps Topology
+## GitOps Topology
 
-There are two ArgoCD entry points in this repo:
+### Root Argo CD Application
 
-1. Seed app (`argocd/application.yaml`, optional/manual):
-  - Points at repository root.
-  - Excludes `argocd/**` and `infrastructure/operators/**` to avoid ownership conflicts.
-  - Can manage workload manifests (for example `definition.yaml` and `topology/`).
+The repository uses one root Argo CD Application at argocd/application.yaml.
 
-2. Root app (`infrastructure/root-app.yaml`, used by `make bootstrap`):
-  - Points at `infrastructure/operators`.
-  - Manages child ArgoCD Applications for operators.
-  - Has automated sync with prune + self-heal + retry.
+- bootstrap applies argocd/application.yaml.
+- The root app points to manifests/ with recurse: true.
+- Sync waves enforce ordering:
 
-Operator child Applications use sync waves:
+| Wave | Resource |
+| --- | --- |
+| 1 | cert-manager Application |
+| 2 | rabbitmq-cluster-operator Application |
+| 3 | rabbitmq-messaging-topology-operator Application |
+| 5 | RabbitmqCluster (manifests/cluster/definition.yaml) |
+| 10 | Queue resources (manifests/topology/queues.yaml) |
 
-- wave `1`: cert-manager
-- wave `2`: rabbitmq-cluster-operator
-- wave `3`: rabbitmq-messaging-topology-operator
+### Operator App Sources
 
-This ensures cert-manager is healthy before the topology operator starts.
+- manifests/operators/cert-manager.yaml:
+  - Uses Helm chart from https://charts.jetstack.io.
+- manifests/operators/rabbitmq-cluster-operator.yaml:
+  - Uses upstream repo path config/installation.
+  - Pins operator image tag via kustomize.images.
+- manifests/operators/rabbitmq-messaging-topology-operator.yaml:
+  - Uses upstream repo path config/installation.
+  - Pins operator image tag via kustomize.images.
+  - Removes Namespace/rabbitmq-system from this app using a kustomize delete patch so only one app owns that Namespace.
+  - Ignores webhook caBundle drift injected by cert-manager.
 
 ## Namespace Architecture
 
-- `argocd`: ArgoCD control plane + repo credentials secret.
-- `cert-manager`: cert-manager components.
-- `rabbitmq-system`: RabbitMQ operators.
-- `sentic`: RabbitMQ cluster and queue topology.
+- argocd: Argo CD control plane and repo credentials secret.
+- cert-manager: cert-manager components.
+- rabbitmq-system: RabbitMQ operator deployments and webhooks.
+- sentic: RabbitmqCluster and Queue CRs.
 
-`make bootstrap` pre-creates all required namespaces, and ArgoCD apps also use `CreateNamespace=true` as a safety net.
+bootstrap pre-creates required namespaces to reduce race conditions during first sync.
 
 ## Bootstrap (Fresh Cluster)
 
 ### Prerequisites
 
-1. A running Kubernetes context (default `minikube`, override with `KUBE_CTX=<context>`).
-2. `kubectl` configured for that cluster.
-3. A GitHub PAT with repo read access for this private repository.
-4. PAT provided as one of:
-  - environment variable: `export GITHUB_PAT=...`
-  - file: `~/.github_pat`
+1. A running Kubernetes context (default is minikube; override with KUBE_CTX=<context>).
+2. kubectl configured for that context.
+3. A GitHub PAT with read access to this repository.
+4. PAT provided via either:
+   - environment variable: export GITHUB_PAT=...
+   - file: ~/.github_pat
 
 ### Command
 
@@ -61,140 +70,110 @@ This ensures cert-manager is healthy before the topology operator starts.
 make bootstrap
 ```
 
-Quick check before you run it:
+### What bootstrap Does
 
-```bash
-ls ~/.github_pat
-```
+1. Validates GITHUB_PAT is available.
+2. Creates namespaces (argocd, cert-manager, rabbitmq-system, sentic) idempotently.
+3. Installs/updates Argo CD manifests in argocd using server-side apply.
+4. Waits for Argo CD CRDs and argocd-server readiness.
+5. Creates/updates the repo-creds secret in argocd atomically (including required Argo CD label).
+6. Applies the root app manifest at argocd/application.yaml.
 
-### What `bootstrap` Does
+### Expected First-Sync Behavior
 
-1. Validates `GITHUB_PAT` is set (fails fast if missing).
-2. Creates namespaces (`argocd`, `cert-manager`, `rabbitmq-system`, `sentic`) idempotently.
-3. Installs ArgoCD manifests.
-4. Waits for ArgoCD CRDs and API deployment readiness.
-5. Creates/updates the repo credentials secret (`repo-creds`) in `argocd`:
-  - Secret is rendered in-memory with `--dry-run=client -o yaml`.
-  - Required ArgoCD label is added in-memory with `kubectl label --local`.
-  - Final manifest is applied in one atomic pipe.
-  - No PAT file is written to the repo.
-6. Applies `infrastructure/root-app.yaml`.
-
-### Expected Bootstrap Behavior
-
-During the first few minutes, you may see transient warnings or errors while operators and webhooks are coming up, for example webhook call failures.
-
-This is expected during a cold start. The ArgoCD Applications use sync waves and retry backoff, so the system should self-heal to green within roughly 3 to 5 minutes.
+Transient warning states may appear while CRDs, webhooks, and controllers settle. With sync waves and retries, apps should converge to Synced and Healthy after startup.
 
 ## Day-2 Operations
 
-### Deploy/Apply Workloads
+### Common Commands
 
-```bash
-make apply
-```
+- make apply
+  - Applies manifests/cluster/definition.yaml and manifests/topology/queues.yaml.
+- make validate
+  - Runs readiness, status, image checks, and pod-health checks.
+- make smoke-test
+  - Verifies publish and consume path through RabbitMQ management API.
+- make setup-validate
+  - One-shot flow for preflight + bootstrap + apply + validation + smoke test.
+- make status
+  - Shows RabbitmqCluster and Queue status.
+- make wait
+  - Waits for broker pod readiness.
+- make port-forward
+  - Opens Argo CD and RabbitMQ local tunnels.
 
-Applies:
+## Repave Behavior (Important)
 
-- `definition.yaml` (RabbitmqCluster)
-- `topology/queues.yaml` (Queue CRs)
+### Does repave blow away Argo CD?
 
-### Repave (Full Clean Rebuild)
+No. This is expected behavior: repave does not delete the Argo CD control plane namespace.
+
+What repave does:
+
+1. validate-operator-tags preflight.
+2. nuke, which:
+   - Deletes all Argo CD Application resources in namespace argocd (cascade foreground).
+   - Deletes RabbitMQ CRs and PVCs in namespace sentic.
+   - Deletes namespaces cert-manager and rabbitmq-system.
+   - Runs bootstrap to rebuild from Git.
+3. wait-argocd-operator-apps until operator apps are Synced and Healthy.
+4. Re-applies cluster and topology manifests.
+5. Runs validate and smoke-test.
+
+What repave does not do:
+
+- It does not delete namespace argocd.
+- It does not explicitly uninstall Argo CD core resources; bootstrap re-applies them idempotently.
+
+So seeing Argo CD remain present across repave is correct and by design.
+
+### repave-hard
+
+repave-hard is an alias for repave.
+
+## Drift Controls and OutOfSync Guardrails
+
+The repository intentionally includes drift protections for common GitOps edge cases:
+
+- CPU quantity canonicalization in manifests/cluster/definition.yaml:
+  - CPU limit uses "1" (canonical) to avoid 1 vs 1000m diffs.
+- Messaging topology webhook caBundle ignore in manifests/operators/rabbitmq-messaging-topology-operator.yaml:
+  - Prevents perpetual OutOfSync from cert-manager injection.
+- Single-owner Namespace strategy for rabbitmq-system:
+  - topology app deletes Namespace/rabbitmq-system from its rendered output.
+  - cluster-operator app remains the owner.
+- Operator image tag safety:
+  - Release tags must not include v prefix.
+  - Argo kustomize image overrides use upstream-specific image keys.
+
+## DR / Phoenix Runbook (Minimal)
+
+For a fresh cluster:
+
+1. Confirm correct Kubernetes context.
+2. Confirm GITHUB_PAT is available.
+3. Run make bootstrap.
+4. Run make apply.
+5. Verify with make validate.
+6. Optional end-to-end verification: make smoke-test.
+
+For a destructive clean-room rebuild:
 
 ```bash
 make repave
 ```
 
-Flow:
-
-1. Validates configured operator tags are pullable from GHCR/Docker Hub.
-2. Runs `make nuke` to wipe ArgoCD-managed apps/resources and bootstrap from Git again.
-3. Waits for ArgoCD operator Applications (`cert-manager`, `rabbitmq-cluster-operator`, `rabbitmq-messaging-topology-operator`) to be `Synced` + `Healthy`.
-4. Re-applies RabbitMQ cluster and topology manifests.
-5. Runs readiness checks (`wait-*`), status checks, operator image sanity checks, and pod health checks.
-6. Runs the smoke test publish/consume path.
-7. Prints generated credentials and AMQP URL.
-
-Notes:
-
-- This is destructive for RabbitMQ state (PVCs are deleted by `nuke`).
-- Use this as the canonical end-to-end recovery command.
-- If operator rollouts fail, `repave` now fails fast with ArgoCD app status, pod state blockers, and recent namespace events.
-- Operator image release tags must not include a `v` prefix (use `2.20.1` not `v2.20.1`, `1.19.1` not `v1.19.1`).
-
-### Repave Hard
-
-```bash
-make repave-hard
-```
-
-`repave-hard` is now a legacy alias of `repave`.
-
-### Runtime Helpers
-
-- `make status` - quick RabbitMQ/Queue status.
-- `make wait` - blocks until broker pod is Ready.
-- `make validate-operator-tags` - preflight check that configured operator tags exist in registries.
-- `make check-operator-images` - fails if operator deployments reference `localhost/...` images.
-- `make logs` - tails broker logs.
-- `make port-forward` - opens both RabbitMQ and ArgoCD tunnels.
-- `make username`, `make password`, `make amqp-url` - credential helpers.
-
-Port-forward:
-
-```bash
-make port-forward                  # RabbitMQ (AMQP + UI) + ArgoCD UI
-```
-
-### ArgoCD UI After Bootstrap
-
-Once `make bootstrap` finishes, you can inspect the cascading sync in the ArgoCD UI.
-
-Get the initial admin password:
-
-```bash
-kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d; echo
-```
-
-Open a tunnel to the UI:
-
-```bash
-make port-forward
-```
-
-Then browse to `https://localhost:8080`.
-
-## Production Readiness Notes
-
-- Operator versions are pinned in `infrastructure/operators/*.yaml`.
-- All ArgoCD Applications use automated sync with prune + self-heal.
-- Retry backoff is configured to handle transient sync/startup races.
-- Topology operator app ignores webhook `caBundle` drift injected by cert-manager to prevent perpetual OutOfSync loops.
-
-## DR / Phoenix Recovery Runbook (Minimal)
-
-For a brand-new cluster:
-
-1. Ensure Kubernetes context is correct.
-2. Ensure PAT is available (`GITHUB_PAT` or `~/.github_pat`).
-3. Run `make bootstrap`.
-4. Run `make apply` (if workload manifests are not already being applied by ArgoCD in your chosen model).
-5. Verify with `make status` and `make wait`.
-6. Use `make port-forward` for local validation.
-
-If you want a full clean-room DR rehearsal on Minikube:
-
-```bash
-minikube delete
-minikube start
-make bootstrap
-```
-
 ## Repository Layout
 
-- `argocd/application.yaml` - optional seed app manifest.
-- `infrastructure/root-app.yaml` - root app that manages operator child apps.
-- `infrastructure/operators/` - operator ArgoCD Application manifests.
-- `definition.yaml` - RabbitmqCluster custom resource.
-- `topology/queues.yaml` - RabbitMQ queue topology custom resources.
-- `Makefile` - bootstrap, deploy, repave, and helper targets.
+- argocd/application.yaml
+  - Root Argo CD Application (recurses manifests/).
+- manifests/operators/
+  - Child Argo CD Applications for cert-manager and RabbitMQ operators.
+- manifests/cluster/definition.yaml
+  - RabbitmqCluster custom resource.
+- manifests/topology/queues.yaml
+  - Queue custom resources.
+- scripts/rabbitmq_smoke_test.sh
+  - Publish/consume smoke test.
+- Makefile
+  - Bootstrap, validation, repave, and helper targets.

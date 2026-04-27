@@ -390,7 +390,7 @@ refresh:
 
 ## Nuke: Wipe all ArgoCD-managed resources and re-bootstrap from scratch.
 ## Use this when the cluster state is too tangled to recover gracefully.
-## Deletes the stale 'infrastructure' app if it exists, wipes everything,
+## Deletes all ArgoCD Applications and managed RabbitMQ/operator resources,
 ## then runs bootstrap to rebuild from Git as the source of truth.
 .PHONY: wait-operator-namespaces-gone
 wait-operator-namespaces-gone:
