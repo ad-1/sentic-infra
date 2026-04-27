@@ -20,11 +20,11 @@ bootstrap:
 	@test -n "$(GITHUB_PAT)" || (echo "❌ ERROR: GITHUB_PAT is not set. Export it or create ~/.github_pat"; exit 1)
 
 	@echo "🏗️  Installing ArgoCD..."
-	@kubectl create namespace argocd || true
+	@kubectl create namespace argocd --dry-run=client -o yaml | kubectl apply -f -
 	@# Pre-create all required namespaces so ArgoCD never races against a missing ns
-	@kubectl create namespace cert-manager || true
-	@kubectl create namespace rabbitmq-system || true
-	@kubectl create namespace sentic || true
+	@kubectl create namespace cert-manager --dry-run=client -o yaml | kubectl apply -f -
+	@kubectl create namespace rabbitmq-system --dry-run=client -o yaml | kubectl apply -f -
+	@kubectl create namespace sentic --dry-run=client -o yaml | kubectl apply -f -
 	@# Use server-side apply for idempotence. --force-conflicts is required when
 	@# an existing cluster has ArgoCD resources previously created with client-side apply.
 	@kubectl apply --server-side --force-conflicts -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
@@ -51,7 +51,45 @@ bootstrap:
 	  | kubectl apply -f -
 
 	@echo "🚀 Applying Root Application..."
-	@kubectl apply -f argocd/application.yaml
+	@kubectl apply -f $(ROOT_APP)
+
+## Wait for ArgoCD to reconcile operator Applications after bootstrap/nuke
+.PHONY: wait-argocd-operator-apps
+wait-argocd-operator-apps:
+	@echo "⏳ Waiting for ArgoCD operator applications to be Synced + Healthy..."
+	@for app in cert-manager rabbitmq-cluster-operator rabbitmq-messaging-topology-operator; do \
+		echo "   • Ensuring app $$app exists..."; \
+		for i in $$(seq 1 90); do \
+			if kubectl --context=$(KUBE_CTX) -n argocd get app $$app >/dev/null 2>&1; then \
+				break; \
+			fi; \
+			sleep 2; \
+		done; \
+		if ! kubectl --context=$(KUBE_CTX) -n argocd get app $$app >/dev/null 2>&1; then \
+			echo "❌ ArgoCD app $$app was not created within 180s."; \
+			echo "   Root app status (if available):"; \
+			kubectl --context=$(KUBE_CTX) -n argocd get app sentic-infra -o wide || true; \
+			exit 1; \
+		fi; \
+		echo "   • Waiting for app $$app to be Synced + Healthy..."; \
+		for i in $$(seq 1 180); do \
+			SYNC=$$(kubectl --context=$(KUBE_CTX) -n argocd get app $$app -o jsonpath='{.status.sync.status}' 2>/dev/null); \
+			HEALTH=$$(kubectl --context=$(KUBE_CTX) -n argocd get app $$app -o jsonpath='{.status.health.status}' 2>/dev/null); \
+			if [ "$$SYNC" = "Synced" ] && [ "$$HEALTH" = "Healthy" ]; then \
+				echo "✅ $$app is Synced + Healthy."; \
+				break; \
+			fi; \
+			sleep 2; \
+		done; \
+		SYNC=$$(kubectl --context=$(KUBE_CTX) -n argocd get app $$app -o jsonpath='{.status.sync.status}' 2>/dev/null); \
+		HEALTH=$$(kubectl --context=$(KUBE_CTX) -n argocd get app $$app -o jsonpath='{.status.health.status}' 2>/dev/null); \
+		if [ "$$SYNC" != "Synced" ] || [ "$$HEALTH" != "Healthy" ]; then \
+			echo "❌ ArgoCD app $$app is not ready (sync=$$SYNC, health=$$HEALTH)."; \
+			echo "   App status:"; \
+			kubectl --context=$(KUBE_CTX) -n argocd get app $$app -o wide; \
+			exit 1; \
+		fi; \
+	done
 
 # ---------------------------------------------------------------------------
 # Prerequisites — run once per cluster
@@ -121,7 +159,14 @@ wait-topology-operator:
 		echo "   Fix: run 'make bootstrap' (GitOps path) or 'make install-topology-operator' (legacy path), then retry."; \
 		exit 1; \
 	}
-	@kubectl --context=$(KUBE_CTX) -n rabbitmq-system rollout status deployment/messaging-topology-operator --timeout=180s
+	@kubectl --context=$(KUBE_CTX) -n rabbitmq-system rollout status deployment/messaging-topology-operator --timeout=240s || { \
+		echo "❌ messaging-topology-operator failed to become Available before timeout."; \
+		echo "   Recent rabbitmq-system pods:"; \
+		kubectl --context=$(KUBE_CTX) -n rabbitmq-system get pods -o wide; \
+		echo "   Recent rabbitmq-system events:"; \
+		kubectl --context=$(KUBE_CTX) -n rabbitmq-system get events --sort-by=.lastTimestamp | tail -n 20; \
+		exit 1; \
+	}
 	@for i in $$(seq 1 30); do \
 		if kubectl --context=$(KUBE_CTX) -n rabbitmq-system get svc messaging-topology-webhook-service >/dev/null 2>&1; then \
 			echo "✅ messaging-topology-webhook-service is available."; \
@@ -159,11 +204,11 @@ username:
 	@$(KUBECTL) get secret $(CLUSTER)-default-user \
 		-o jsonpath="{.data.username}" | base64 --decode; echo
 
-## Print the auto-generated admin password
+## Print RabbitMQ + ArgoCD admin passwords
 .PHONY: password
 password:
-	@$(KUBECTL) get secret $(CLUSTER)-default-user \
-		-o jsonpath="{.data.password}" | base64 --decode; echo
+	@echo "RabbitMQ password: $$( $(KUBECTL) get secret $(CLUSTER)-default-user -o jsonpath='{.data.password}' | base64 --decode )"
+	@echo "ArgoCD password:   $$( kubectl --context=$(KUBE_CTX) -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 --decode )"
 
 ## Print the full AMQP URL (safe for use in shell scripts)
 .PHONY: amqp-url
@@ -182,9 +227,38 @@ status:
 	$(KUBECTL) get rabbitmqcluster $(CLUSTER)
 	$(KUBECTL) get queue
 
+## Verify operators are not configured with localhost-only image references
+.PHONY: check-operator-images
+check-operator-images:
+	@echo "🔎 Checking operator deployment image references..."
+	@BAD=$$(kubectl --context=$(KUBE_CTX) -n rabbitmq-system get deploy -o jsonpath='{range .items[*]}{.metadata.name}{"="}{range .spec.template.spec.containers[*]}{.image}{" "}{end}{"\n"}{end}' 2>/dev/null | \
+		awk -F= '$$1 ~ /rabbitmq-cluster-operator|messaging-topology-operator/ && $$2 ~ /(^|[[:space:]])localhost\// {print $$0}'); \
+	if [ -n "$$BAD" ]; then \
+		echo "❌ Found localhost image references for operators:"; \
+		echo "$$BAD"; \
+		echo "   This usually means the cluster is expecting local-only images."; \
+		echo "   Reconcile Argo apps and image tags before retrying."; \
+		exit 1; \
+	fi; \
+	echo "✅ Operator images look cluster-reachable."
+
+## Fail fast if pods are stuck in image pull / startup backoff states
+.PHONY: check-pod-health
+check-pod-health:
+	@echo "🔎 Checking for pod health issues (image pull/backoff states)..."
+	@FAILED=$$(kubectl --context=$(KUBE_CTX) get pods -A --no-headers 2>/dev/null | \
+		awk '$$4 ~ /ImagePullBackOff|ErrImagePull|CrashLoopBackOff|CreateContainerConfigError/ {print $$1"/"$$2" status="$$4}'); \
+	if [ -n "$$FAILED" ]; then \
+		echo "❌ Found unhealthy pods:"; \
+		echo "$$FAILED"; \
+		echo "   Use: kubectl --context=$(KUBE_CTX) -n <namespace> describe pod <pod-name>"; \
+		exit 1; \
+	fi; \
+	echo "✅ No image-pull/backoff pod states detected."
+
 ## Validate all required control-plane and workload resources
 .PHONY: validate
-validate: wait-cluster-operator wait-topology-operator wait status
+validate: wait-cluster-operator wait-topology-operator wait status check-operator-images check-pod-health
 	@echo "✅ Validation checks passed."
 
 ## Smoke-test publish + consume path via RabbitMQ management API
@@ -194,7 +268,7 @@ smoke-test:
 
 ## One-shot setup and verification flow for a fresh cluster
 .PHONY: setup-validate
-setup-validate: bootstrap apply validate smoke-test
+setup-validate: bootstrap wait-argocd-operator-apps apply validate smoke-test
 	@echo "🚀 Setup + validation completed successfully."
 
 ## Tail broker logs
@@ -225,38 +299,33 @@ port-forward:
 	trap 'kill $$ARGO_PID $$RABBIT_PID 2>/dev/null' INT TERM EXIT; \
 	wait; 
 
-## Repave: The Orchestrator
+## Repave: Full destructive rebuild (nuke + bootstrap + apply + validate + smoke test)
 .PHONY: repave
 repave:
-	@echo "🧹 Step 1/5 — Tearing down (ignoring errors if not found)..."
-	@$(KUBECTL) delete -f manifests/topology/queues.yaml --ignore-not-found
-	@$(KUBECTL) delete -f manifests/cluster/definition.yaml --ignore-not-found
-	
-	@echo "🐇 Step 2/5 — Applying definitions..."
+	@echo "💥 Step 1/7 — Nuking resources and re-bootstrapping ArgoCD..."
+	@$(MAKE) -s nuke
+	@echo "⏳ Step 2/7 — Waiting for ArgoCD operator apps to reconcile..."
+	@$(MAKE) -s wait-argocd-operator-apps
+	@echo "🐇 Step 3/7 — Applying RabbitMQ cluster + topology manifests..."
 	@$(MAKE) -s apply
-	
-	@echo "⏳ Step 3/5 — Waiting 10s for Operator to reconcile..."
-	@sleep 10
-	
-	@echo "🟢 Step 4/5 — Blocking until pod is Ready..."
-	@$(MAKE) -s wait
-	
-	@echo "🔐 Step 5/5 — Extraction complete. Credentials:"
+	@echo "🟢 Step 4/7 — Running readiness and health validation checks..."
+	@$(MAKE) -s validate
+	@echo "🧪 Step 5/7 — Running publish/consume smoke test..."
+	@$(MAKE) -s smoke-test
+	@echo "🔐 Step 6/7 — Extracting credentials..."
 	@echo "---------------------------------------------------"
 	@printf "Username: "; $(MAKE) -s username
-	@printf "Password: "; $(MAKE) -s password
+	@$(MAKE) -s password
 	@printf "AMQP URL: "; $(MAKE) -s amqp-url
 	@echo "---------------------------------------------------"
-	@echo "🚀 SUCCESS: Infrastructure is live."
-	@echo "👉 Run 'make port-forward' for RabbitMQ or 'make port-forward TARGET=argocd' for ArgoCD UI"
+	@echo "🚀 Step 7/7 — SUCCESS: Clean rebuild + validation complete."
+	@echo "👉 Run 'make port-forward' to open RabbitMQ + ArgoCD tunnels."
 
-## Force-Repave: Wipes EVERYTHING including persistent data (PVCs)
+## Force-Repave: Legacy alias for repave
 .PHONY: repave-hard
-repave-hard: delete-topology
-	$(KUBECTL) delete rabbitmqcluster --all
-	$(KUBECTL) delete pvc --all
-	$(MAKE) apply
-	@echo "🔥 Hard repave complete. All data wiped and infra reset."
+repave-hard:
+	@echo "⚠️  repave-hard is now an alias of repave."
+	@$(MAKE) -s repave
 
 .PHONY: refresh nuke
 
@@ -270,19 +339,39 @@ refresh:
 ## Use this when the cluster state is too tangled to recover gracefully.
 ## Deletes the stale 'infrastructure' app if it exists, wipes everything,
 ## then runs bootstrap to rebuild from Git as the source of truth.
+.PHONY: wait-operator-namespaces-gone
+wait-operator-namespaces-gone:
+	@for ns in cert-manager rabbitmq-system; do \
+		echo "⏳ Waiting for namespace $$ns to terminate (if present)..."; \
+		for i in $$(seq 1 60); do \
+			if ! kubectl --context=$(KUBE_CTX) get namespace $$ns >/dev/null 2>&1; then \
+				echo "✅ Namespace $$ns is gone."; \
+				break; \
+			fi; \
+			sleep 2; \
+		done; \
+		if kubectl --context=$(KUBE_CTX) get namespace $$ns >/dev/null 2>&1; then \
+			echo "❌ Namespace $$ns still exists after 120s."; \
+			kubectl --context=$(KUBE_CTX) get namespace $$ns -o yaml | sed -n '1,40p'; \
+			exit 1; \
+		fi; \
+	done
+
 .PHONY: nuke
 nuke:
-	@echo "💥 Step 1/5 — Deleting ALL ArgoCD Applications (cascade=foreground)..."
+	@echo "💥 Step 1/6 — Deleting ALL ArgoCD Applications (cascade=foreground)..."
 	@kubectl --context=$(KUBE_CTX) -n argocd delete app --all \
 		--cascade=foreground --ignore-not-found --timeout=300s || true
-	@echo "🧹 Step 2/5 — Cleaning up leftover RabbitMQ resources in sentic..."
+	@echo "🧹 Step 2/6 — Cleaning up leftover RabbitMQ resources in sentic..."
 	@$(KUBECTL) delete rabbitmqcluster --all --ignore-not-found || true
 	@$(KUBECTL) delete queues.rabbitmq.com --all --ignore-not-found || true
 	@$(KUBECTL) delete pvc --all --ignore-not-found || true
-	@echo "🗑️  Step 3/5 — Removing stale operator namespaces (operators will be reinstalled)..."
+	@echo "🗑️  Step 3/6 — Removing stale operator namespaces (operators will be reinstalled)..."
 	@kubectl --context=$(KUBE_CTX) delete namespace cert-manager rabbitmq-system \
 		--ignore-not-found --timeout=120s || true
-	@echo "🧼 Step 4/5 — Removing any accidentally committed vendor manifests..."
+	@echo "⏳ Step 4/6 — Waiting for operator namespaces to fully terminate..."
+	@$(MAKE) -s wait-operator-namespaces-gone
+	@echo "🧼 Step 5/6 — Removing any accidentally committed vendor manifests..."
 	@rm -rf vendor/
-	@echo "♻️  Step 5/5 — Re-bootstrapping from Git..."
+	@echo "♻️  Step 6/6 — Re-bootstrapping from Git..."
 	@$(MAKE) -s bootstrap

@@ -14,7 +14,7 @@ spec:
     kustomize:
       # Pin the container image tag — config/installation uses :latest by default
       images:
-        - rabbitmqoperator/messaging-topology-operator:v1.19.1
+        - controller=rabbitmqoperator/messaging-topology-operator:v1.19.1
   destination:
     server: "https://kubernetes.default.svc"
     namespace: rabbitmq-system

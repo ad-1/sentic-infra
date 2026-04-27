@@ -14,7 +14,7 @@ spec:
     kustomize:
       # Pin the container image tag — config/installation uses :latest by default
       images:
-        - ghcr.io/rabbitmq/cluster-operator:v2.20.1
+        - rabbitmqoperator/cluster-operator-dev=ghcr.io/rabbitmq/cluster-operator:v2.20.1
   destination:
     server: "https://kubernetes.default.svc"
     namespace: rabbitmq-system

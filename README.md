@@ -99,7 +99,7 @@ Applies:
 - `definition.yaml` (RabbitmqCluster)
 - `topology/queues.yaml` (Queue CRs)
 
-### Repave (Preserve Data)
+### Repave (Full Clean Rebuild)
 
 ```bash
 make repave
@@ -107,44 +107,40 @@ make repave
 
 Flow:
 
-1. Deletes queue topology and RabbitmqCluster definitions.
-2. Re-applies definitions.
-3. Waits for broker readiness.
-4. Prints generated credentials and AMQP URL.
+1. Runs `make nuke` to wipe ArgoCD-managed apps/resources and bootstrap from Git again.
+2. Waits for ArgoCD operator Applications (`cert-manager`, `rabbitmq-cluster-operator`, `rabbitmq-messaging-topology-operator`) to be `Synced` + `Healthy`.
+3. Re-applies RabbitMQ cluster and topology manifests.
+4. Runs readiness checks (`wait-*`), status checks, operator image sanity checks, and pod health checks.
+5. Runs the smoke test publish/consume path.
+6. Prints generated credentials and AMQP URL.
 
 Notes:
 
-- PVCs are not deleted, so persistent broker data is preserved.
+- This is destructive for RabbitMQ state (PVCs are deleted by `nuke`).
+- Use this as the canonical end-to-end recovery command.
+- If operator rollouts fail, `repave` now fails with ArgoCD app status and operator diagnostics.
 
-### Repave Hard (Blow Everything Away)
+### Repave Hard
 
 ```bash
 make repave-hard
 ```
 
-Flow:
-
-1. Deletes queue topology resources.
-2. Deletes all `RabbitmqCluster` resources in namespace `sentic`.
-3. Deletes all PVCs in namespace `sentic`.
-4. Re-applies workload manifests.
-
-This is destructive and wipes broker state.
+`repave-hard` is now a legacy alias of `repave`.
 
 ### Runtime Helpers
 
 - `make status` - quick RabbitMQ/Queue status.
 - `make wait` - blocks until broker pod is Ready.
+- `make check-operator-images` - fails if operator deployments reference `localhost/...` images.
 - `make logs` - tails broker logs.
-- `make port-forward` - generic forwarding helper (RabbitMQ default).
+- `make port-forward` - opens both RabbitMQ and ArgoCD tunnels.
 - `make username`, `make password`, `make amqp-url` - credential helpers.
 
-Port-forward options:
+Port-forward:
 
 ```bash
-make port-forward                  # RabbitMQ (AMQP + UI)
-make port-forward TARGET=argocd    # ArgoCD UI
-make port-forward TARGET=both      # RabbitMQ + ArgoCD
+make port-forward                  # RabbitMQ (AMQP + UI) + ArgoCD UI
 ```
 
 ### ArgoCD UI After Bootstrap
@@ -160,7 +156,7 @@ kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.pas
 Open a tunnel to the UI:
 
 ```bash
-make port-forward TARGET=argocd
+make port-forward
 ```
 
 Then browse to `https://localhost:8080`.
