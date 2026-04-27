@@ -15,6 +15,19 @@ spec:
       # Pin the container image tag — release tags do not use the v-prefix.
       images:
         - localhost/messaging-topology-operator=rabbitmqoperator/messaging-topology-operator:1.19.1
+      # cluster-operator owns Namespace/rabbitmq-system. Remove the duplicate
+      # namespace from this app to avoid shared-resource ownership conflicts.
+      patches:
+        - target:
+            version: v1
+            kind: Namespace
+            name: rabbitmq-system
+          patch: |-
+            $patch: delete
+            apiVersion: v1
+            kind: Namespace
+            metadata:
+              name: rabbitmq-system
   destination:
     server: "https://kubernetes.default.svc"
     namespace: rabbitmq-system
@@ -34,8 +47,6 @@ spec:
     automated:
       prune: true
       selfHeal: true
-    syncOptions:
-      - CreateNamespace=true
     retry:
       limit: 5
       backoff:
