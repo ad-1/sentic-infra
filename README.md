@@ -107,12 +107,13 @@ make repave
 
 Flow:
 
-1. Runs `make nuke` to wipe ArgoCD-managed apps/resources and bootstrap from Git again.
-2. Waits for ArgoCD operator Applications (`cert-manager`, `rabbitmq-cluster-operator`, `rabbitmq-messaging-topology-operator`) to be `Synced` + `Healthy`.
-3. Re-applies RabbitMQ cluster and topology manifests.
-4. Runs readiness checks (`wait-*`), status checks, operator image sanity checks, and pod health checks.
-5. Runs the smoke test publish/consume path.
-6. Prints generated credentials and AMQP URL.
+1. Validates configured operator tags are pullable from GHCR/Docker Hub.
+2. Runs `make nuke` to wipe ArgoCD-managed apps/resources and bootstrap from Git again.
+3. Waits for ArgoCD operator Applications (`cert-manager`, `rabbitmq-cluster-operator`, `rabbitmq-messaging-topology-operator`) to be `Synced` + `Healthy`.
+4. Re-applies RabbitMQ cluster and topology manifests.
+5. Runs readiness checks (`wait-*`), status checks, operator image sanity checks, and pod health checks.
+6. Runs the smoke test publish/consume path.
+7. Prints generated credentials and AMQP URL.
 
 Notes:
 
@@ -133,6 +134,7 @@ make repave-hard
 
 - `make status` - quick RabbitMQ/Queue status.
 - `make wait` - blocks until broker pod is Ready.
+- `make validate-operator-tags` - preflight check that configured operator tags exist in registries.
 - `make check-operator-images` - fails if operator deployments reference `localhost/...` images.
 - `make logs` - tails broker logs.
 - `make port-forward` - opens both RabbitMQ and ArgoCD tunnels.

@@ -14,7 +14,7 @@ spec:
     kustomize:
       # Pin the container image tag — release tags do not use the v-prefix.
       images:
-        - controller=rabbitmqoperator/messaging-topology-operator:1.19.1
+        - localhost/messaging-topology-operator=rabbitmqoperator/messaging-topology-operator:1.19.1
   destination:
     server: "https://kubernetes.default.svc"
     namespace: rabbitmq-system

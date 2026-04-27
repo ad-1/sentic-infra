@@ -252,6 +252,32 @@ status:
 	$(KUBECTL) get rabbitmqcluster $(CLUSTER)
 	$(KUBECTL) get queue
 
+## Preflight: verify configured operator image tags exist in registries
+.PHONY: validate-operator-tags
+validate-operator-tags:
+	@echo "🔎 Validating configured operator image tags in registries..."
+	@CLUSTER_TAG=$$(awk -F: '/cluster-operator-dev=/{gsub(/[[:space:]]/, "", $$0); print $$NF; exit}' manifests/operators/rabbitmq-cluster-operator.yaml); \
+	 TOPO_TAG=$$(awk -F: '/localhost\/messaging-topology-operator=/{gsub(/[[:space:]]/, "", $$0); print $$NF; exit}' manifests/operators/rabbitmq-messaging-topology-operator.yaml); \
+	 test -n "$$CLUSTER_TAG" || { echo "❌ Could not parse cluster operator tag from manifests/operators/rabbitmq-cluster-operator.yaml"; exit 1; }; \
+	 test -n "$$TOPO_TAG" || { echo "❌ Could not parse topology operator tag from manifests/operators/rabbitmq-messaging-topology-operator.yaml"; exit 1; }; \
+	 echo "   Cluster operator tag: $$CLUSTER_TAG"; \
+	 echo "   Topology operator tag: $$TOPO_TAG"; \
+	 GHCR_TOKEN=$$(curl -fsSL 'https://ghcr.io/token?service=ghcr.io&scope=repository:rabbitmq/cluster-operator:pull' | sed -n 's/.*"token":"\([^"]*\)".*/\1/p'); \
+	 test -n "$$GHCR_TOKEN" || { echo "❌ Failed to retrieve GHCR token for rabbitmq/cluster-operator."; exit 1; }; \
+	 GHCR_CODE=$$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $$GHCR_TOKEN" -H 'Accept: application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json' "https://ghcr.io/v2/rabbitmq/cluster-operator/manifests/$$CLUSTER_TAG"); \
+	 if [ "$$GHCR_CODE" != "200" ]; then \
+		echo "❌ Cluster operator tag '$$CLUSTER_TAG' not found in ghcr.io/rabbitmq/cluster-operator (HTTP $$GHCR_CODE)."; \
+		exit 1; \
+	 fi; \
+	 DOCKER_TOKEN=$$(curl -fsSL 'https://auth.docker.io/token?service=registry.docker.io&scope=repository:rabbitmqoperator/messaging-topology-operator:pull' | sed -n 's/.*"token":"\([^"]*\)".*/\1/p'); \
+	 test -n "$$DOCKER_TOKEN" || { echo "❌ Failed to retrieve Docker Hub token for rabbitmqoperator/messaging-topology-operator."; exit 1; }; \
+	 DOCKER_CODE=$$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $$DOCKER_TOKEN" -H 'Accept: application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json' "https://registry-1.docker.io/v2/rabbitmqoperator/messaging-topology-operator/manifests/$$TOPO_TAG"); \
+	 if [ "$$DOCKER_CODE" != "200" ]; then \
+		echo "❌ Topology operator tag '$$TOPO_TAG' not found in rabbitmqoperator/messaging-topology-operator (HTTP $$DOCKER_CODE)."; \
+		exit 1; \
+	 fi; \
+	 echo "✅ Operator image tags are available in registries."
+
 ## Verify operators are not configured with localhost-only image references
 .PHONY: check-operator-images
 check-operator-images:
@@ -293,7 +319,7 @@ smoke-test:
 
 ## One-shot setup and verification flow for a fresh cluster
 .PHONY: setup-validate
-setup-validate: bootstrap wait-argocd-operator-apps apply validate smoke-test
+setup-validate: validate-operator-tags bootstrap wait-argocd-operator-apps apply validate smoke-test
 	@echo "🚀 Setup + validation completed successfully."
 
 ## Tail broker logs
@@ -327,23 +353,25 @@ port-forward:
 ## Repave: Full destructive rebuild (nuke + bootstrap + apply + validate + smoke test)
 .PHONY: repave
 repave:
-	@echo "💥 Step 1/7 — Nuking resources and re-bootstrapping ArgoCD..."
+	@echo "🔎 Step 1/8 — Validating operator image tags before rebuild..."
+	@$(MAKE) -s validate-operator-tags
+	@echo "💥 Step 2/8 — Nuking resources and re-bootstrapping ArgoCD..."
 	@$(MAKE) -s nuke
-	@echo "⏳ Step 2/7 — Waiting for ArgoCD operator apps to reconcile..."
+	@echo "⏳ Step 3/8 — Waiting for ArgoCD operator apps to reconcile..."
 	@$(MAKE) -s wait-argocd-operator-apps
-	@echo "🐇 Step 3/7 — Applying RabbitMQ cluster + topology manifests..."
+	@echo "🐇 Step 4/8 — Applying RabbitMQ cluster + topology manifests..."
 	@$(MAKE) -s apply
-	@echo "🟢 Step 4/7 — Running readiness and health validation checks..."
+	@echo "🟢 Step 5/8 — Running readiness and health validation checks..."
 	@$(MAKE) -s validate
-	@echo "🧪 Step 5/7 — Running publish/consume smoke test..."
+	@echo "🧪 Step 6/8 — Running publish/consume smoke test..."
 	@$(MAKE) -s smoke-test
-	@echo "🔐 Step 6/7 — Extracting credentials..."
+	@echo "🔐 Step 7/8 — Extracting credentials..."
 	@echo "---------------------------------------------------"
 	@printf "Username: "; $(MAKE) -s username
 	@$(MAKE) -s password
 	@printf "AMQP URL: "; $(MAKE) -s amqp-url
 	@echo "---------------------------------------------------"
-	@echo "🚀 Step 7/7 — SUCCESS: Clean rebuild + validation complete."
+	@echo "🚀 Step 8/8 — SUCCESS: Clean rebuild + validation complete."
 	@echo "👉 Run 'make port-forward' to open RabbitMQ + ArgoCD tunnels."
 
 ## Force-Repave: Legacy alias for repave
