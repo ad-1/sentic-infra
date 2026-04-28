@@ -169,6 +169,8 @@ make repave
   - Root Argo CD Application (recurses manifests/).
 - manifests/operators/
   - Child Argo CD Applications for cert-manager and RabbitMQ operators.
+- manifests/apps/
+  - Argo CD Application CRs for Sentic microservices (one per service).
 - manifests/cluster/definition.yaml
   - RabbitmqCluster custom resource.
 - manifests/topology/queues.yaml
@@ -177,3 +179,9 @@ make repave
   - Publish/consume smoke test.
 - Makefile
   - Bootstrap, validation, repave, and helper targets.
+- docs/VISION.md
+  - Project vision, pipeline overview, service definitions, and delivery stages.
+- docs/ONBOARDING.md
+  - Guide for onboarding new microservices into the GitOps control plane.
+- docs/adr/
+  - Architecture Decision Records.
