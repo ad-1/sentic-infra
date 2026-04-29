@@ -2,7 +2,7 @@
 
 > Platform-level tracking for sentic-infra, sentic-signal, and sentic-notifier.
 > Service-specific roadmaps (e.g. `sentic-signal/docs/ROADMAP.md`) track feature work within each service.
-> Last updated: 2026-04-28
+> Last updated: 2026-04-29
 
 ---
 
@@ -63,13 +63,13 @@
 
 | Task | Status | Notes |
 |------|--------|-------|
-| GitHub Actions: unit tests (`pytest tests/unit`) | ✅ | Runs on PR and push to `main`. Coverage reported via `pytest-cov`. |
+| GitHub Actions: unit tests (`pytest tests/unit`) | ✅ | Runs on PR and push to `main`. Coverage reported via `pytest-cov`. Tests pass locally. |
 | GitHub Actions: integration tests | ⬜ | `tests/integration/` is empty — populate once RabbitMQ publish/consume tests are written |
-| GitHub Actions: build Docker image | ✅ | Multi-stage build, `docker/build-push-action@v6` |
-| GitHub Actions: push to `ghcr.io/ad-1/sentic-signal` | ✅ | Tagged `sha-<short>` and `latest` |
-| GitHub Actions: write image tag back to `deploy/sentic-signal-chart/values-dev.yaml` via PR | ✅ | `peter-evans/create-pull-request@v6` |
-| Trivy vulnerability scan | ✅ | Blocks deployment on `CRITICAL` findings |
-| Coverage reporting | ✅ | `--cov=sentic_signal --cov-report=term-missing` in test job |
+| GitHub Actions: build Docker image | ⚠️ | Workflow defined (`docker/build-push-action@v6`). **Not yet validated** — no successful CI run recorded in GHCR. |
+| GitHub Actions: push to `ghcr.io/ad-1/sentic-signal` | ⚠️ | Workflow defined. **Not yet validated** — no image confirmed in GHCR. Requires repo workflow permissions set to Read and write. |
+| GitHub Actions: write image tag back to `deploy/sentic-signal-chart/values-dev.yaml` via PR | ⚠️ | Workflow defined (`peter-evans/create-pull-request@v6`). **Not yet validated** end-to-end. |
+| Trivy vulnerability scan | ⚠️ | Defined in workflow. **Not yet validated** — depends on successful image push. |
+| Coverage reporting | ✅ | `--cov=sentic_signal --cov-report=term-missing` confirmed working locally. |
 
 ---
 
@@ -117,7 +117,7 @@
 
 | Service | Purpose | Status |
 |---------|---------|-------|
-| `sentic-analyst` | Consumes `raw-news`, runs LLM/heuristic analysis, publishes to `analysis-results` | ⬜ Not started — **next after Phase 3** |
+| `sentic-analyst` | Consumes `raw-news`, runs LLM/heuristic analysis, publishes to `analysis-results` | ⬜ **Confirmed next priority (2026-04-29).** GitHub repo not yet created. Follow `docs/ONBOARDING.md` to scaffold. |
 | `sentic-quant` | Consumes `analysis-results` for quantitative modelling | ⬜ Not started |
 
 New services should follow the onboarding guide in `docs/ONBOARDING.md`.

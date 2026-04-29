@@ -4,6 +4,64 @@ This document is for application teams adding a new microservice to the Sentic p
 the delivery model, what you own, what this repo owns, and the exact steps to get your service
 running under Argo CD.
 
+## Developer Prerequisites
+
+Before onboarding a service, confirm your local environment is configured correctly.
+
+### GitHub CLI
+
+Install and authenticate the GitHub CLI:
+
+```bash
+brew install gh
+gh auth login   # select SSH when prompted
+```
+
+Verify the token has the required scopes:
+
+```bash
+gh auth status
+# Token scopes should include: repo, write:packages (needed for manual GHCR pushes)
+```
+
+To add `write:packages` if missing:
+
+```bash
+gh auth refresh -s write:packages
+```
+
+### SSH Key
+
+Confirm your local SSH key is registered with GitHub:
+
+```bash
+# Lists keys registered on your GitHub account
+curl -s https://github.com/<your-username>.keys
+
+# Compare against your local key
+cat ~/.ssh/id_ed25519.pub
+```
+
+Test connectivity:
+
+```bash
+ssh -T git@github.com
+# Expected: Hi <username>! You've successfully authenticated...
+```
+
+### GitHub Actions — Repository Settings
+
+Each service repo must have the following Actions settings configured before CI can run successfully:
+
+| Setting | Location | Required Value |
+|---|---|---|
+| Workflow permissions | Settings → Actions → General → Workflow permissions | **Read and write** |
+| Actions permissions | Settings → Actions → General | Allow all actions and reusable workflows |
+
+The **Read and write** permission is required for `GITHUB_TOKEN` to push images to GHCR and open automated image-tag PRs. Without it, the `build-and-push` and `update-image-tag` jobs will fail with a 403.
+
+---
+
 ## Delivery Model Overview
 
 Sentic uses a **Hybrid GitOps** model (see [ADR-001](adr/ADR-001-SERVICE-DELIVERY-MODEL.md)):
