@@ -238,10 +238,16 @@ keys:
 
 | Key | Value |
 |---|---|
-| `username` | auto-generated |
+| `username` | auto-generated with random suffix (e.g. `default_user_<suffix>`) |
 | `password` | auto-generated |
-| `host` | `definition.sentic.svc.cluster.local` |
+| `host` | `definition.sentic.svc` |
 | `port` | `5672` |
+
+> **Important:** `host` and `username` must be sourced from this secret at runtime via
+> `secretKeyRef`. Do not hardcode either value in a ConfigMap or `values.yaml` — the operator
+> generates a random username suffix on first boot and the host is managed by the operator.
+> All four values (`host`, `port`, `username`, `password`) must come from `definition-default-user`.
+> The deployment template example below already shows the correct pattern.
 
 Reference this secret in your Deployment directly. Do not hard-code credentials.
 
