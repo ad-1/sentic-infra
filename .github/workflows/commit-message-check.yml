@@ -1,0 +1,39 @@
+name: Commit Message Check
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+
+jobs:
+  commit-message-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate commit subjects
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          pattern='^([A-Z]{2,10}-[0-9]+|[A-Z]{2,4}-[0-9]{8}-[0-9]{4}): [a-z0-9].+'
+          failed=0
+          while IFS= read -r sha; do
+            subject="$(git log --format=%s -n 1 "${sha}")"
+            if ! [[ "${subject}" =~ ${pattern} ]]; then
+              echo "Invalid commit message for ${sha}: ${subject}"
+              failed=1
+            fi
+          done < <(git rev-list --no-merges "${BASE_SHA}..${HEAD_SHA}")
+
+          if [[ "${failed}" -ne 0 ]]; then
+            echo "Expected format: <WORK_ID>: <imperative-summary>"
+            echo "Examples:"
+            echo "  SIG-42: simplify docker install layer order"
+            echo "  GH-317: add smoke check for rabbitmq publisher"
+            echo "  INF-20260501-0840: document bootstrap prerequisites"
+            exit 1
+          fi
