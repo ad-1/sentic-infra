@@ -223,6 +223,15 @@ wait:
 # Credentials helpers
 # ---------------------------------------------------------------------------
 
+## Provision all external service secrets (idempotent).
+## Reads from environment variables — export them before running:
+##   export ALPHA_VANTAGE_KEY=...  FINNHUB_API_KEY=...  TELEGRAM_BOT_TOKEN=...  TELEGRAM_CHAT_ID=...
+## See docs/adr/ADR-004-SECRET-MANAGEMENT.md for full strategy and rotation instructions.
+.PHONY: secrets
+secrets:
+	@test -n "$(KUBE_CTX)" || (echo "❌ KUBE_CTX is not set."; exit 1)
+	@sh scripts/provision-secrets.sh --context $(KUBE_CTX) --namespace $(NAMESPACE)
+
 ## Print the auto-generated admin username
 .PHONY: username
 username:

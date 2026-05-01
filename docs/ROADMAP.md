@@ -112,8 +112,23 @@
 > unvalidated CI/CD and an incomplete Helm chart that block reliable deployment of downstream
 > services.
 
+### `NewsItem` contract — locked (ADR-003)
+
+The `NewsItem` schema at the `signal→extractor` boundary is now locked:
+
+| Field | Status | Notes |
+|---|---|---|
+| `ticker`, `headline`, `url`, `summary`, `published`, `relevance_score`, `source_provider` | ✅ Locked | Core discovery fields. Pass through all five stages. |
+| `provider_sentiment` | ✅ Retained | Alpha Vantage raw label only. Always `None` for Yahoo RSS and Finnhub. Passes through unchanged. War room agents may reference it as one input. |
+| `sentic_sentiment` | ✅ Removed | Field deleted from `NewsItem`. Sentiment scoring belongs in `sentic-analyst` (`AnalysisResult`). There is no producer for this field at the ingestor layer. |
+
+**Key principle:** `sentic-signal` is a pure ingestor. It does not compute sentiment scores. The war room agents in `sentic-analyst` produce the definitive analysis after receiving full-text `ContentBatch` objects.
+
+### Remaining hardening tasks
+
 | Task | Repo | Status | Notes |
 |------|------|--------|-------|
+| Lock `NewsItem` schema: remove `sentic_sentiment`, clarify `provider_sentiment` scope | sentic-signal | ✅ | `sentic_sentiment` removed from model. `provider_sentiment` is AV-only raw label, retained. |
 | Validate GitHub Actions: image build + push to `ghcr.io/ad-1/sentic-signal` | sentic-signal | ⚠️ | Workflow defined; no confirmed successful run. Requires repo workflow permissions = Read and write. |
 | Validate image tag PR update (`values-dev.yaml`) | sentic-signal | ⚠️ | `peter-evans/create-pull-request@v6` defined; not yet confirmed end-to-end. |
 | Validate Trivy scan on published image | sentic-signal | ⚠️ | Depends on successful image push. |

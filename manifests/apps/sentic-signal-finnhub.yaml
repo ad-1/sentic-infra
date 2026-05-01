@@ -1,19 +1,21 @@
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: sentic-notifier
+  name: sentic-signal-finnhub
   namespace: argocd
   annotations:
-    argocd.argoproj.io/sync-wave: "20"
+    argocd.argoproj.io/sync-wave: "22"
 spec:
   project: default
   source:
-    repoURL: https://github.com/ad-1/sentic-notifier
+    repoURL: https://github.com/ad-1/sentic-signal
     targetRevision: main
-    path: deploy/chart
+    path: deploy/sentic-signal-chart
     helm:
       valueFiles:
+        - values.yaml
         - values-dev.yaml
+        - values-finnhub.yaml
   destination:
     server: https://kubernetes.default.svc
     namespace: sentic

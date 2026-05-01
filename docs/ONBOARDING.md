@@ -245,6 +245,66 @@ keys:
 
 Reference this secret in your Deployment directly. Do not hard-code credentials.
 
+## Secrets and Credentials
+
+The Sentic platform uses an imperative provisioning approach for external service secrets.
+See [ADR-004](adr/ADR-004-SECRET-MANAGEMENT.md) for the full strategy, rotation guide, and
+Sealed Secrets migration path.
+
+### Secret Inventory
+
+| Secret name | Namespace | Keys | Consumed by | Owner |
+|---|---|---|---|---|
+| `definition-default-user` | `sentic` | `username`, `password`, `host`, `port` | all services (RabbitMQ) | RabbitMQ Cluster Operator — **automatic, no action required** |
+| `sentic-signal-secrets` | `sentic` | `alpha-vantage-key`, `finnhub-api-key` | `sentic-signal` (keyed providers only) | Platform operator — must provision before first sync |
+| `sentic-notifier-telegram` | `sentic` | `bot-token`, `chat-id` | `sentic-notifier` | Platform operator — must provision before first sync |
+
+### Provisioning
+
+**Secrets must be created before Argo CD syncs service Applications.** If a pod starts without its
+referenced secret, it will enter `CreateContainerConfigError` and fail until the secret exists.
+
+```bash
+# 1. Export credentials from your password manager:
+export ALPHA_VANTAGE_KEY=<your-alpha-vantage-key>
+export FINNHUB_API_KEY=<your-finnhub-api-key>
+export TELEGRAM_BOT_TOKEN=<your-telegram-bot-token>
+export TELEGRAM_CHAT_ID=<your-telegram-chat-id>
+
+# 2. Run the provisioning target (idempotent — safe to re-run):
+make secrets
+```
+
+Keys left empty are skipped with a warning. If you are only deploying `sentic-signal-yahoo-rss`
+and `sentic-notifier`, you only need `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`.
+
+### Order of Operations (First Deployment)
+
+```
+1. make bootstrap    # Install Argo CD, register repo credentials, apply root Application
+2. make secrets      # Create sentic-signal-secrets + sentic-notifier-telegram
+3. Push this repo    # Argo CD syncs Application CRs; services start and find their secrets
+```
+
+### Credential Rotation
+
+Re-run `make secrets` with the new value exported. Deployments must be restarted to pick up
+the change (CronJob pods read secrets at start — the next scheduled run uses the new value):
+
+```bash
+# After re-running make secrets with updated TELEGRAM_BOT_TOKEN:
+kubectl rollout restart deployment/sentic-notifier -n sentic
+```
+
+### Adding Secrets for a New Service
+
+If your service requires secrets not listed above:
+
+1. Create the secret via `kubectl` (same idempotent pattern used in `provision-secrets.sh`).
+2. Add an entry to the secret inventory table above.
+3. Add a provisioning block to `scripts/provision-secrets.sh`.
+4. Document the required keys in your service's `values.yaml` under the appropriate section.
+
 ## Adding Your Service to sentic-infra
 
 Once your service repo is ready, add an Argo CD Application CR to this repo. No other changes to
@@ -276,6 +336,8 @@ spec:
     automated:
       prune: true
       selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
     retry:
       limit: 5
       backoff:
