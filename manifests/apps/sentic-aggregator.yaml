@@ -1,0 +1,32 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: sentic-aggregator
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "24"
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/ad-1/sentic-aggregator
+    targetRevision: main
+    path: deploy/chart
+    helm:
+      valueFiles:
+        - values.yaml
+        - values-dev.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: sentic
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 10m
