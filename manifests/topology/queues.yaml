@@ -29,6 +29,44 @@ spec:
     namespace: sentic
 ---
 # ---------------------------------------------------------------------------
+# rich-content
+# Published by sentic-extractor. Contains full-text enriched news articles.
+# ---------------------------------------------------------------------------
+apiVersion: rabbitmq.com/v1beta1
+kind: Queue
+metadata:
+  name: rich-content
+  namespace: sentic
+  annotations:
+    argocd.argoproj.io/sync-wave: "10"
+spec:
+  name: rich-content
+  durable: true
+  autoDelete: false
+  rabbitmqClusterReference:
+    name: definition
+    namespace: sentic
+---
+# ---------------------------------------------------------------------------
+# enriched-batches
+# Published by sentic-aggregator. Contains deduplicated/windowed content batches.
+# ---------------------------------------------------------------------------
+apiVersion: rabbitmq.com/v1beta1
+kind: Queue
+metadata:
+  name: enriched-batches
+  namespace: sentic
+  annotations:
+    argocd.argoproj.io/sync-wave: "10"
+spec:
+  name: enriched-batches
+  durable: true
+  autoDelete: false
+  rabbitmqClusterReference:
+    name: definition
+    namespace: sentic
+---
+# ---------------------------------------------------------------------------
 # analysis-results
 # Published by sentic-analyst. Contains scored/enriched articles.
 # ---------------------------------------------------------------------------
