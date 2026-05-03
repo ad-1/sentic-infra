@@ -129,13 +129,14 @@ The `NewsItem` schema at the `signal→extractor` boundary is now locked:
 | Task | Repo | Status | Notes |
 |------|------|--------|-------|
 | Lock `NewsItem` schema: remove `sentic_sentiment`, clarify `provider_sentiment` scope | sentic-signal | ✅ | `sentic_sentiment` removed from model. `provider_sentiment` is AV-only raw label, retained. |
-| Validate GitHub Actions: image build + push to `ghcr.io/ad-1/sentic-signal` | sentic-signal | ⚠️ | Workflow defined; no confirmed successful run. Requires repo workflow permissions = Read and write. |
-| Validate image tag PR update (`values.yaml`) | sentic-signal | ⚠️ | `peter-evans/create-pull-request@v6` defined; not yet confirmed end-to-end. |
-| Validate Trivy scan on published image | sentic-signal | ⚠️ | Depends on successful image push. |
+| Validate GitHub Actions: image build + push to `ghcr.io/ad-1/sentic-signal` | sentic-signal | ✅ | CI build succeeds; images pushed to GHCR. Validated on cluster. |
+| Validate image tag PR update (`values.yaml`) | sentic-signal | ✅ | Image tag PR creation confirmed end-to-end. |
+| Validate Trivy scan on published image | sentic-signal | ✅ | Trivy scan completes successfully on published image. |
+| Signal operational validation: publish to raw-news queue on minikube cluster | sentic-signal | ✅ | Successfully deployed and publishing to RabbitMQ. |
 | Add RabbitMQ subchart dependency to sentic-signal Helm chart | sentic-signal | ⚠️ | CronJob template in progress; subchart dependency missing. |
 | Add ArgoCD Application CR: `manifests/apps/sentic-signal.yaml` | sentic-infra | ⬜ | Wave 20, same pattern as notifier CR. |
 | Provision `sentic-signal-secrets` on minikube | sentic-infra | ⬜ | API keys: Alpha Vantage, Finnhub. |
-| Add `rich-content` and `enriched-batches` queues to `manifests/topology/queues.yaml` | sentic-infra | ⬜ | Required by ADR-003 before extractor and aggregator can be deployed. |
+| Add `rich-content` and `enriched-batches` queues to `manifests/topology/queues.yaml` | sentic-infra | ✅ | Both queues provisioned in topology. |
 
 ---
 
