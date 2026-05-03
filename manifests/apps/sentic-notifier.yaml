@@ -13,7 +13,7 @@ spec:
     path: deploy/chart
     helm:
       valueFiles:
-        - values-dev.yaml
+        - values.yaml
   destination:
     server: https://kubernetes.default.svc
     namespace: sentic

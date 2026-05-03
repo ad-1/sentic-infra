@@ -13,27 +13,34 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Validate commit subjects
+      - name: Validate SEN commit subjects
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
-          pattern='^([A-Z]{2,10}-[0-9]+|[A-Z]{2,4}-[0-9]{8}-[0-9]{4}): [a-z0-9].+'
+          pattern='^SEN(-[0-9]+)?: .+'
           failed=0
+          checked=0
+
           while IFS= read -r sha; do
             subject="$(git log --format=%s -n 1 "${sha}")"
+            checked=$((checked + 1))
             if ! [[ "${subject}" =~ ${pattern} ]]; then
               echo "Invalid commit message for ${sha}: ${subject}"
               failed=1
             fi
           done < <(git rev-list --no-merges "${BASE_SHA}..${HEAD_SHA}")
 
+          if [[ "${checked}" -eq 0 ]]; then
+            echo "No non-merge commits to validate."
+            exit 0
+          fi
+
           if [[ "${failed}" -ne 0 ]]; then
-            echo "Expected format: <WORK_ID>: <imperative-summary>"
+            echo "Expected format: SEN(-<number>)?: <summary>"
             echo "Examples:"
-            echo "  SIG-42: simplify docker install layer order"
-            echo "  GH-317: add smoke check for rabbitmq publisher"
-            echo "  INF-20260501-0840: document bootstrap prerequisites"
+            echo "  SEN: align workflow naming"
+            echo "  SEN-42: simplify chart values handling"
             exit 1
           fi

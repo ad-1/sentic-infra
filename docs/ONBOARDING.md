@@ -78,7 +78,7 @@ Sentic uses a **Hybrid GitOps** model (see [ADR-001](adr/ADR-001-SERVICE-DELIVER
 │                         │  image tag update PR   └──────────────────────────────┘
 │   /deploy/              │ ◀────────────────────────────── CI writes back         │
 │     chart/              │                                                        │
-│       values-dev.yaml   │                                                        │
+│       values.yaml       │                                                        │
 └─────────────────────────┘                                                        │
           │ Argo watches                                                            │
           ▼                                                                        │
@@ -97,7 +97,7 @@ Sentic uses a **Hybrid GitOps** model (see [ADR-001](adr/ADR-001-SERVICE-DELIVER
 | Application code | `your-repo/` |
 | Dockerfile | `your-repo/Dockerfile` |
 | Helm chart | `your-repo/deploy/chart/` |
-| Environment-specific values | `your-repo/deploy/chart/values-<env>.yaml` |
+| Deployment values | `your-repo/deploy/chart/values.yaml` |
 | CI pipeline (build + image push) | `your-repo/.github/workflows/` |
 | Image tag write-back (PR or commit) | `your-repo/.github/workflows/` |
 
@@ -124,8 +124,7 @@ sentic-news-ingester/
 ├── deploy/
 │   └── chart/
 │       ├── Chart.yaml
-│       ├── values.yaml          # chart defaults (image repo, resource limits, secret names)
-│       ├── values-dev.yaml      # dev overrides — CI updates image.tag here via PR
+|       ├── values.yaml          # deployment values (CI updates image.tag here via PR)
 │       └── templates/
 │           ├── _helpers.tpl
 │           └── deployment.yaml
@@ -152,7 +151,7 @@ replicaCount: 1
 image:
   repository: ghcr.io/ad-1/sentic-<your-service>
   pullPolicy: IfNotPresent
-  # Overridden per environment in values-<env>.yaml. CI writes the new tag there via PR.
+  # CI updates image.tag here via a PR on every successful image push.
   tag: ""
 
 # RabbitMQ connection — credentials come from the secret auto-created by the
@@ -170,14 +169,10 @@ resources:
     memory: 256Mi
 ```
 
-### deploy/chart/values-dev.yaml
+### deploy/chart/values.yaml (image tag ownership)
 
-```yaml
-# Dev environment overrides.
-# CI updates image.tag here via a PR on every successful image push.
-image:
-  tag: "latest"
-```
+`values.yaml` is the active deployment input for the current single-environment
+setup. CI updates `image.tag` in this file via PR.
 
 ### deploy/chart/templates/deployment.yaml (minimal example)
 
@@ -334,7 +329,7 @@ spec:
     path: deploy/chart
     helm:
       valueFiles:
-        - values-dev.yaml
+        - values.yaml
   destination:
     server: https://kubernetes.default.svc
     namespace: sentic
@@ -430,7 +425,7 @@ jobs:
 ### What the Reusable Workflow Does
 
 - Checks out your service repo.
-- Validates that `deploy/chart/values-dev.yaml` exists and has an `image.tag` entry.
+- Validates that `deploy/chart/values.yaml` exists and has an `image.tag` entry.
 - Rewrites `image.tag` to the new value.
 - Opens a PR titled `deploy(sentic-<your-service>): <tag>` with a standard description.
 

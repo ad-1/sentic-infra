@@ -37,7 +37,7 @@
 | Task | Repo | Status | Notes |
 |------|------|--------|-------|
 | Fix `deploy/chart/values.yaml`: `rabbitmq.queue` `analysis-results` → `notifications` | sentic-notifier | ✅ | Updated in chart values. |
-| Upgrade Dockerfile from `python:3.9-slim-buster` to `python:3.11-slim` | sentic-notifier | ✅ | Runtime now aligned with `pyproject.toml` (`^3.11`). |
+| Upgrade Dockerfile from `python:3.9-slim-buster` to `python:3.13-slim` | sentic-notifier | ✅ | Runtime now aligned with `pyproject.toml` (`^3.13`). |
 | Add non-root user to sentic-notifier Dockerfile | sentic-notifier | ✅ | Added dedicated `app` user and switched runtime user. |
 | Migrate sentic-signal chart image from `andrewdavies/sentic-signal` (Docker Hub) to `ghcr.io/ad-1/sentic-signal` | sentic-signal | ✅ | Chart repository updated to GHCR namespace. |
 
@@ -45,7 +45,7 @@
 
 ## Phase 3 — CI/CD Pipelines
 
-> Pattern defined in ADR-001: build image → push to `ghcr.io` → write image tag back to `values-dev.yaml` via PR. Registry decision: standardise on **ghcr.io** (free, no infra overhead, native GitHub Actions integration).
+> Pattern defined in ADR-001: build image → push to `ghcr.io` → write image tag back to `values.yaml` via PR. Registry decision: standardise on **ghcr.io** (free, no infra overhead, native GitHub Actions integration).
 
 ### sentic-notifier
 
@@ -55,7 +55,7 @@
 | GitHub Actions: integration tests | ⬜ | `test_verify_chat.py` hits live Telegram — excluded from CI. Revisit after sentic-analyst defines the payload contract. |
 | GitHub Actions: build Docker image | ✅ | `docker/build-push-action@v6` |
 | GitHub Actions: push to `ghcr.io/ad-1/sentic-notifier` | ✅ | Tagged `sha-<short>` and `latest` via `docker/metadata-action` |
-| GitHub Actions: write image tag back to `deploy/chart/values-dev.yaml` via PR | ✅ | `peter-evans/create-pull-request@v6` opens PR on every successful push to `main` |
+| GitHub Actions: write image tag back to `deploy/chart/values.yaml` via PR | ✅ | `peter-evans/create-pull-request@v6` opens PR on every successful push to `main` |
 | Trivy vulnerability scan | ✅ | Runs post-push; blocks `update-image-tag` job on `CRITICAL` findings |
 | Coverage reporting | ✅ | `--cov=sentic_notifier --cov-report=term-missing` in test job |
 
@@ -67,7 +67,7 @@
 | GitHub Actions: integration tests | ⬜ | `tests/integration/` is empty — populate once RabbitMQ publish/consume tests are written |
 | GitHub Actions: build Docker image | ⚠️ | Workflow defined (`docker/build-push-action@v6`). **Not yet validated** — no successful CI run recorded in GHCR. |
 | GitHub Actions: push to `ghcr.io/ad-1/sentic-signal` | ⚠️ | Workflow defined. **Not yet validated** — no image confirmed in GHCR. Requires repo workflow permissions set to Read and write. |
-| GitHub Actions: write image tag back to `deploy/sentic-signal-chart/values-dev.yaml` via PR | ⚠️ | Workflow defined (`peter-evans/create-pull-request@v6`). **Not yet validated** end-to-end. |
+| GitHub Actions: write image tag back to `deploy/sentic-signal-chart/values.yaml` via PR | ⚠️ | Workflow defined (`peter-evans/create-pull-request@v6`). **Not yet validated** end-to-end. |
 | Trivy vulnerability scan | ⚠️ | Defined in workflow. **Not yet validated** — depends on successful image push. |
 | Coverage reporting | ✅ | `--cov=sentic_signal --cov-report=term-missing` confirmed working locally. |
 
@@ -130,7 +130,7 @@ The `NewsItem` schema at the `signal→extractor` boundary is now locked:
 |------|------|--------|-------|
 | Lock `NewsItem` schema: remove `sentic_sentiment`, clarify `provider_sentiment` scope | sentic-signal | ✅ | `sentic_sentiment` removed from model. `provider_sentiment` is AV-only raw label, retained. |
 | Validate GitHub Actions: image build + push to `ghcr.io/ad-1/sentic-signal` | sentic-signal | ⚠️ | Workflow defined; no confirmed successful run. Requires repo workflow permissions = Read and write. |
-| Validate image tag PR update (`values-dev.yaml`) | sentic-signal | ⚠️ | `peter-evans/create-pull-request@v6` defined; not yet confirmed end-to-end. |
+| Validate image tag PR update (`values.yaml`) | sentic-signal | ⚠️ | `peter-evans/create-pull-request@v6` defined; not yet confirmed end-to-end. |
 | Validate Trivy scan on published image | sentic-signal | ⚠️ | Depends on successful image push. |
 | Add RabbitMQ subchart dependency to sentic-signal Helm chart | sentic-signal | ⚠️ | CronJob template in progress; subchart dependency missing. |
 | Add ArgoCD Application CR: `manifests/apps/sentic-signal.yaml` | sentic-infra | ⬜ | Wave 20, same pattern as notifier CR. |
